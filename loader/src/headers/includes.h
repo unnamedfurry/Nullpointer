@@ -26,6 +26,6 @@ typedef uint16_t port_t;
 #define EXEC_RESPONSE "TR: applet not found"
 
 #define FN_DROPPER "dvrhelper"
-#define FN_BINARY "nullpointer"
+#define FN_BINARY "fnbnet"
 
 extern char *id_tag;

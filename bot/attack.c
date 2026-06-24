@@ -287,7 +287,7 @@ uint32_t attack_get_opt_ip(uint8_t opts_len, struct attack_option *opts, uint8_t
     else
         return inet_addr(val);
 }
-static void add_attack(ATTACK_VECTOR vector, ATTACK_FUNC func)
+void add_attack(ATTACK_VECTOR vector, ATTACK_FUNC func)
 {
     struct attack_method *method = calloc(1, sizeof (struct attack_method));
     method->vector = vector;

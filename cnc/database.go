@@ -27,7 +27,7 @@ func NewDatabase(dbAddr string, dbUser string, dbPassword string, dbName string)
 	if err != nil {
 		fmt.Println(err)
 	}
-	fmt.Println("\x1b[97m[ \x1b[96mNullPointer CNC ready\x1b[97m]")
+	fmt.Println("\x1b[97m[ \x1b[96mFemboyNetwork CNC ready\x1b[97m]")
 
 	return &Database{db}
 }

