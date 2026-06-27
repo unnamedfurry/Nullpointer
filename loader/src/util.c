@@ -3,8 +3,11 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <unistd.h>
+#include <ctype.h>
 
 #include "headers/includes.h"
 #include "headers/util.h"

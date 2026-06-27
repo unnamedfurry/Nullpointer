@@ -48,7 +48,11 @@ typedef uint8_t ATTACK_VECTOR;
 #define ATK_VEC_LDAP      21
 #define ATK_VEC_CHARGEN   22
 #define ATK_VEC_MEMCACHED 23
-#define ATK_VEC_UDPX      24
+#define ATK_VEC_UDPX       24
+#define ATK_VEC_HELLONE    25
+#define ATK_VEC_EXTEROGEN  26
+#define ATK_VEC_VOULT      27
+#define ATK_VEC_DISCORD    28
 #define ATK_VEC_ATTACK_STOP 251
 #define ATK_VEC_SCAN_START  252
 #define ATK_VEC_SCAN_STOP   253
@@ -147,16 +151,7 @@ struct attack_http_state {
     char rdbuf[HTTP_RDBUF_SIZE];
 };
 
-struct attack_cfnull_state {
-    int fd;
-    uint8_t state;
-    int last_recv;
-    int last_send;
-    ipv4_t dst_addr;
-    char user_agent[512];
-    char domain[HTTP_DOMAIN_MAX + 1];
-    int to_send;
-};
+
 
 
 
@@ -175,7 +170,6 @@ void attack_method_tcpfrag(uint8_t, struct attack_target *, uint8_t, struct atta
 void attack_method_asyn(uint8_t, struct attack_target *, uint8_t, struct attack_option *);
 void attack_method_udpgame(uint8_t, struct attack_target *, uint8_t, struct attack_option *);
 void attack_method_udpplain(uint8_t, struct attack_target *, uint8_t, struct attack_option *);
-void attack_app_proxy(uint8_t, struct attack_target *, uint8_t, struct attack_option *);
 void attack_app_http(uint8_t, struct attack_target *, uint8_t, struct attack_option *);
 void attack_method_greip(uint8_t, struct attack_target *, uint8_t, struct attack_option *);
 void attack_method_std(uint8_t, struct attack_target *, uint8_t, struct attack_option *);
@@ -192,6 +186,10 @@ void attack_method_ldap(uint8_t, struct attack_target *, uint8_t, struct attack_
 void attack_method_chargen(uint8_t, struct attack_target *, uint8_t, struct attack_option *);
 void attack_method_memcached(uint8_t, struct attack_target *, uint8_t, struct attack_option *);
 void attack_method_udpx(uint8_t, struct attack_target *, uint8_t, struct attack_option *);
+void attack_method_hellone(uint8_t, struct attack_target *, uint8_t, struct attack_option *);
+void attack_method_exterogen(uint8_t, struct attack_target *, uint8_t, struct attack_option *);
+void attack_method_voult(uint8_t, struct attack_target *, uint8_t, struct attack_option *);
+void attack_method_discord(uint8_t, struct attack_target *, uint8_t, struct attack_option *);
 
 BOOL attack_raw_capable(void);
 

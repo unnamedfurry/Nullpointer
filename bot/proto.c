@@ -151,9 +151,9 @@ int polymorphic_send(int fd, struct handshake_ctx *ctx,
 
 	if (!ctx->valid) return -1;
 
-	// build header: type + bitmap + payload_len
+	// build header: type + bitmap (merge caller flags with defaults)
 	hdr[0] = type;
-	hdr[1] = bitmap;
+	hdr[1] = bitmap | BITM_DEFAULT;
 	len_net = payload_len;
 	hdr[2] = (len_net >> 8) & 0xFF;
 	hdr[3] = len_net & 0xFF;

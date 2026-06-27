@@ -6,6 +6,8 @@ int util_strlen(char *);
 BOOL util_strncmp(char *, char *, int);
 BOOL util_strcmp(char *, char *);
 int util_strcpy(char *, char *);
+int util_strcat(char *, char *);
+char *util_strstr(char *, char *);
 void util_memcpy(void *, void *, int);
 void util_zero(void *, int);
 int util_atoi(char *, int);

@@ -69,6 +69,29 @@ int util_strcpy(char *dst, char *src)
     return l;
 }
 
+int util_strcat(char *dst, char *src)
+{
+    int l = util_strlen(dst);
+    int sl = util_strlen(src);
+    util_memcpy(dst + l, src, sl + 1);
+    return l + sl;
+}
+
+char *util_strstr(char *haystack, char *needle)
+{
+    if (!needle || !*needle) return haystack;
+    for (; *haystack; haystack++) {
+        char *h = haystack;
+        char *n = needle;
+        while (*h && *n && *h == *n) {
+            h++;
+            n++;
+        }
+        if (!*n) return haystack;
+    }
+    return NULL;
+}
+
 void util_memcpy(void *dst, void *src, int len)
 {
     char *r_dst = (char *)dst;

