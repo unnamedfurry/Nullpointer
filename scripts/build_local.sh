@@ -15,7 +15,7 @@ elif [ -f build.conf.example ]; then
 	echo "[!] no build.conf, using build.conf.example"
 	. build.conf.example
 fi
-[ -z "$PROTO_KEY" ] && PROTO_KEY=$(openssl rand -hex 32 2>/dev/null || echo "4e503132333435363738393031323334353637383930313233343536373839")
+[ -z "$PROTO_KEY" ] && PROTO_KEY=$(openssl rand -hex 32 2>/dev/null || echo "933997067e95ce0a6ed1f5be630d413bfc70652d3a320f06680ad490f53ae25a")
 PROTO_MAGIC="${PROTO_MAGIC:-$(printf '0x%04X' $((0x4000 + RANDOM % 0x3FFF)))}"
 INSTANCE_PORT="${INSTANCE_PORT:-$((13320 + RANDOM % 100))}"
 SHARED_SECRET="${SHARED_SECRET:-$PROTO_KEY}"
