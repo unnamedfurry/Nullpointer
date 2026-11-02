@@ -6,7 +6,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
-#define BIN_SERVER utils_inet_addr(195,209,219,35)
+#define BIN_SERVER utils_inet_addr(127,0,0,1)
 #define BIN_PORT 34132
 
 #define EXEC_MSG            "FmbNet\n"

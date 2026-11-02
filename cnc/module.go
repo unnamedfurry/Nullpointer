@@ -61,18 +61,21 @@ func handleBuildModuleCommand(admin *Admin, tokens []string) string {
 		prefix string
 		arch   string
 	}
-	specs := []ccSpec{
-		{"", "x86"},
-		{"i686-linux-gnu", "x86"},
-		{"arm-linux-gnueabi", "arm"},
-		{"arm-linux-gnueabihf", "arm7"},
-		{"aarch64-linux-gnu", "aarch64"},
-		{"powerpc-linux-gnu", "ppc"},
-		{"powerpc64le-linux-gnu", "ppc64le"},
-		{"riscv64-linux-gnu", "riscv64"},
-		{"mips-linux-gnu", "mips"},
-		{"mipsel-linux-gnu", "mpsl"},
-	}
+    specs := []ccSpec{
+        {"x86_64-linux-musl", "x86"},
+        {"i686-linux-musl", "x86"},
+        {"arm-linux-musleabi", "arm"},
+        {"arm-linux-musleabihf", "arm7"},
+        {"aarch64-linux-musl", "aarch64"},
+        {"powerpc-linux-musl", "ppc"},
+        {"powerpc64le-linux-musl", "ppc64le"},
+        {"riscv64-linux-musl", "riscv64"},
+        {"mips-linux-musl", "mips"},
+        {"mipsel-linux-musl", "mpsl"},
+        {"m68k-linux-musl", "m68k"},
+        {"sh4-linux-musl", "sh4"},
+        {"sparc-linux-musl", "sparc"},
+    }
 
 	var result strings.Builder
 	compiledArches := []string{}

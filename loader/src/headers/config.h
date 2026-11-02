@@ -1,6 +1,6 @@
 #pragma once
 
-#define HTTP_SERVER "suck.tcpmalware.live"
+#define HTTP_SERVER "localhost"
 #define HTTP_PORT 80
 
-#define TFTP_SERVER "195.209.219.35"
+#define TFTP_SERVER "127.0.0.1"
